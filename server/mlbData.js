@@ -102,50 +102,53 @@ export async function getTeamBatters(teamId) {
 }
 
 function parseGameLog(data, statAliases, debugLabel) {
-  // Best-guess shape: data.statistics[] is a list of season-type categories,
-  // each with `names` (stat abbreviations) and `events[]` (one per game)
-  // whose `stats` array lines up positionally with `names`.
+  // Real shape (confirmed against a live response — see git history for the
+  // earlier best-guess this replaced): `labels`/`names` are shared arrays at
+  // the TOP LEVEL of the whole gamelog response, not per-category. Each
+  // category (data.seasonTypes[0].categories[i], one per season/split) has
+  // `events[]` (one per game) whose `stats` array lines up positionally
+  // against that shared top-level array — not its own.
   const categories = data?.statistics ?? data?.seasonTypes?.[0]?.categories ?? [];
   const eventDates = data?.events ?? {}; // eventId -> { gameDate, ... }, best-effort
+  const sharedNames = data?.labels ?? data?.names;
 
   if (!Array.isArray(categories) || categories.length === 0) {
     warn(debugLabel, `no statistics categories found. Top-level keys: ${Object.keys(data ?? {}).join(", ")}`);
     return [];
   }
-
-  for (const category of categories) {
-    const names = category?.names ?? category?.labels;
-    if (!Array.isArray(names)) continue;
-
-    const indices = {};
-    for (const [key, aliases] of Object.entries(statAliases)) {
-      indices[key] = findStatIndex(names, aliases);
-    }
-    if (Object.values(indices).every((i) => i === -1)) continue; // wrong category
-
-    const games = (category.events ?? [])
-      .map((ev) => {
-        const stats = ev.stats ?? [];
-        const values = {};
-        for (const [key, idx] of Object.entries(indices)) {
-          values[key] = idx === -1 ? null : Number(stats[idx]) || 0;
-        }
-        const dateStr = eventDates[ev.eventId]?.gameDate ?? ev.gameDate ?? ev.date ?? null;
-        return { eventId: ev.eventId ?? null, date: dateStr, ...values };
-      })
-      // Only count games the player actually appeared in, where we can tell.
-      .filter((g) => Object.values(g).some((v) => typeof v === "number" && v > 0) || g.appeared);
-
-    games.sort((a, b) => new Date(b.date ?? 0) - new Date(a.date ?? 0));
-    return games;
+  if (!Array.isArray(sharedNames)) {
+    warn(debugLabel, `no top-level labels/names array to index stats by. Top-level keys: ${Object.keys(data ?? {}).join(", ")}`);
+    return [];
   }
 
-  warn(
-    debugLabel,
-    `${categories.length} categories found but none had a "names"/"labels" array matching ${JSON.stringify(Object.values(statAliases).flat())}. ` +
-      `First category keys: ${Object.keys(categories[0] ?? {}).join(", ")}`
-  );
-  return [];
+  const indices = {};
+  for (const [key, aliases] of Object.entries(statAliases)) {
+    indices[key] = findStatIndex(sharedNames, aliases);
+  }
+  if (Object.values(indices).every((i) => i === -1)) {
+    warn(debugLabel, `none of ${JSON.stringify(Object.values(statAliases).flat())} matched the labels/names array: ${JSON.stringify(sharedNames)}`);
+    return [];
+  }
+
+  // First category observed to be the full/overall log across every player
+  // checked while diagnosing this — later ones look like splits (vs LHP,
+  // home/away, etc.) based on varying category counts per player.
+  const category = categories[0];
+  const games = (category.events ?? [])
+    .map((ev) => {
+      const stats = ev.stats ?? [];
+      const values = {};
+      for (const [key, idx] of Object.entries(indices)) {
+        values[key] = idx === -1 ? null : Number(stats[idx]) || 0;
+      }
+      const dateStr = eventDates[ev.eventId]?.gameDate ?? ev.gameDate ?? ev.date ?? null;
+      return { eventId: ev.eventId ?? null, date: dateStr, ...values };
+    })
+    // Only count games the player actually appeared in, where we can tell.
+    .filter((g) => Object.values(g).some((v) => typeof v === "number" && v > 0) || g.appeared);
+
+  games.sort((a, b) => new Date(b.date ?? 0) - new Date(a.date ?? 0));
+  return games;
 }
 
 /** Recent-games-first batting log: [{date, H, HR, RBI}]. */
@@ -153,7 +156,14 @@ export async function getBatterGameLog(playerId) {
   return cached(`mlb:batlog:${playerId}`, 60 * 60 * 1000, async () => {
     try {
       const data = await getJson(`${WEB_BASE}/athletes/${playerId}/gamelog`);
-      return parseGameLog(data, { H: ["H"], HR: ["HR"], RBI: ["RBI"] }, `getBatterGameLog(${playerId})`);
+      // Confirmed live: the top-level `names` array uses full camelCase words
+      // ("hits", "homeRuns", "RBIs"); `labels` (probably abbreviations like
+      // "H"/"HR"/"RBI") is preferred when present — both are covered here.
+      return parseGameLog(
+        data,
+        { H: ["H", "hits"], HR: ["HR", "homeRuns"], RBI: ["RBI", "RBIs"] },
+        `getBatterGameLog(${playerId})`
+      );
     } catch (err) {
       warn("getBatterGameLog", `player ${playerId}: request failed — ${err.message}`);
       return [];
@@ -166,7 +176,15 @@ export async function getPitcherGameLog(playerId) {
   return cached(`mlb:pitchlog:${playerId}`, 60 * 60 * 1000, async () => {
     try {
       const data = await getJson(`${WEB_BASE}/athletes/${playerId}/gamelog`);
-      return parseGameLog(data, { SO: ["SO", "K"], IP: ["IP"] }, `getPitcherGameLog(${playerId})`);
+      // Pitching gamelogs weren't directly confirmed (only batting was) — these
+      // aliases are the same kind of guess as before, just with more variants.
+      // If pitcher trends stay empty, check the [mlbData] warn output for this
+      // function the same way the batting one just got diagnosed.
+      return parseGameLog(
+        data,
+        { SO: ["SO", "K", "strikeouts"], IP: ["IP", "inningsPitched"] },
+        `getPitcherGameLog(${playerId})`
+      );
     } catch (err) {
       warn("getPitcherGameLog", `player ${playerId}: request failed — ${err.message}`);
       return [];
