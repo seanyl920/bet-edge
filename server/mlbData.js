@@ -15,6 +15,14 @@ const SITE_BASE = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb";
 const WEB_BASE = "https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb";
 const FETCH_TIMEOUT_MS = 8000;
 
+// These functions used to fail silently (return [] / null) on any problem —
+// safe for the app, useless for debugging. This logs *why* every time
+// something comes back empty, so a thin trend feed is diagnosable from the
+// terminal instead of a guess. Prefix "[mlbData]" so it's easy to grep for.
+function warn(fn, detail) {
+  console.warn(`[mlbData] ${fn}: ${detail}`);
+}
+
 async function getJson(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -34,7 +42,14 @@ export async function getProbablePitchers(espnEventId) {
       const data = await getJson(`${SITE_BASE}/summary?event=${espnEventId}`);
       const comp = data?.header?.competitions?.[0] ?? data?.competitions?.[0];
       const list = comp?.probables ?? data?.gameInfo?.probables ?? data?.probables;
-      if (!Array.isArray(list)) return { home: null, away: null };
+      if (!Array.isArray(list)) {
+        warn(
+          "getProbablePitchers",
+          `event ${espnEventId}: no probables array found (checked comp.probables, gameInfo.probables, data.probables). ` +
+            `Top-level keys: ${Object.keys(data ?? {}).join(", ")}`
+        );
+        return { home: null, away: null };
+      }
 
       const byHomeAway = (ha) => {
         const entry = list.find((p) => p.homeAway === ha);
@@ -45,8 +60,13 @@ export async function getProbablePitchers(espnEventId) {
           name: athlete.displayName ?? athlete.fullName ?? athlete.shortName ?? "Unknown",
         };
       };
-      return { home: byHomeAway("home"), away: byHomeAway("away") };
-    } catch {
+      const result = { home: byHomeAway("home"), away: byHomeAway("away") };
+      if (!result.home && !result.away) {
+        warn("getProbablePitchers", `event ${espnEventId}: probables array present (len ${list.length}) but neither home nor away athlete parsed out of it. Sample entry: ${JSON.stringify(list[0])}`);
+      }
+      return result;
+    } catch (err) {
+      warn("getProbablePitchers", `event ${espnEventId}: request failed — ${err.message}`);
       return { home: null, away: null };
     }
   });
@@ -58,7 +78,10 @@ export async function getTeamBatters(teamId) {
     try {
       const data = await getJson(`${SITE_BASE}/teams/${teamId}/roster`);
       const groups = data?.athletes;
-      if (!Array.isArray(groups)) return [];
+      if (!Array.isArray(groups)) {
+        warn("getTeamBatters", `team ${teamId}: data.athletes isn't an array. Top-level keys: ${Object.keys(data ?? {}).join(", ")}`);
+        return [];
+      }
       const batters = [];
       for (const group of groups) {
         const positionLabel = String(group.position ?? "").toLowerCase();
@@ -67,21 +90,30 @@ export async function getTeamBatters(teamId) {
           batters.push({ id: String(a.id), name: a.displayName ?? a.fullName });
         }
       }
+      if (batters.length === 0) {
+        warn("getTeamBatters", `team ${teamId}: 0 batters parsed from ${groups.length} group(s). Group labels: ${groups.map((g) => g.position).join(", ")}`);
+      }
       return batters;
-    } catch {
+    } catch (err) {
+      warn("getTeamBatters", `team ${teamId}: request failed — ${err.message}`);
       return [];
     }
   });
 }
 
-function parseGameLog(data, statAliases) {
+function parseGameLog(data, statAliases, debugLabel) {
   // Best-guess shape: data.statistics[] is a list of season-type categories,
   // each with `names` (stat abbreviations) and `events[]` (one per game)
   // whose `stats` array lines up positionally with `names`.
   const categories = data?.statistics ?? data?.seasonTypes?.[0]?.categories ?? [];
   const eventDates = data?.events ?? {}; // eventId -> { gameDate, ... }, best-effort
 
-  for (const category of Array.isArray(categories) ? categories : []) {
+  if (!Array.isArray(categories) || categories.length === 0) {
+    warn(debugLabel, `no statistics categories found. Top-level keys: ${Object.keys(data ?? {}).join(", ")}`);
+    return [];
+  }
+
+  for (const category of categories) {
     const names = category?.names ?? category?.labels;
     if (!Array.isArray(names)) continue;
 
@@ -107,6 +139,12 @@ function parseGameLog(data, statAliases) {
     games.sort((a, b) => new Date(b.date ?? 0) - new Date(a.date ?? 0));
     return games;
   }
+
+  warn(
+    debugLabel,
+    `${categories.length} categories found but none had a "names"/"labels" array matching ${JSON.stringify(Object.values(statAliases).flat())}. ` +
+      `First category keys: ${Object.keys(categories[0] ?? {}).join(", ")}`
+  );
   return [];
 }
 
@@ -115,8 +153,9 @@ export async function getBatterGameLog(playerId) {
   return cached(`mlb:batlog:${playerId}`, 60 * 60 * 1000, async () => {
     try {
       const data = await getJson(`${WEB_BASE}/athletes/${playerId}/gamelog`);
-      return parseGameLog(data, { H: ["H"], HR: ["HR"], RBI: ["RBI"] });
-    } catch {
+      return parseGameLog(data, { H: ["H"], HR: ["HR"], RBI: ["RBI"] }, `getBatterGameLog(${playerId})`);
+    } catch (err) {
+      warn("getBatterGameLog", `player ${playerId}: request failed — ${err.message}`);
       return [];
     }
   });
@@ -127,8 +166,9 @@ export async function getPitcherGameLog(playerId) {
   return cached(`mlb:pitchlog:${playerId}`, 60 * 60 * 1000, async () => {
     try {
       const data = await getJson(`${WEB_BASE}/athletes/${playerId}/gamelog`);
-      return parseGameLog(data, { SO: ["SO", "K"], IP: ["IP"] });
-    } catch {
+      return parseGameLog(data, { SO: ["SO", "K"], IP: ["IP"] }, `getPitcherGameLog(${playerId})`);
+    } catch (err) {
+      warn("getPitcherGameLog", `player ${playerId}: request failed — ${err.message}`);
       return [];
     }
   });
@@ -145,7 +185,8 @@ export async function getPitcherSeasonStats(playerId) {
         whip: findStatValue(stats, ["WHIP"]),
         k9: findStatValue(stats, ["K/9", "K9", "SO9"]),
       };
-    } catch {
+    } catch (err) {
+      warn("getPitcherSeasonStats", `player ${playerId}: request failed — ${err.message}`);
       return { era: null, whip: null, k9: null };
     }
   });
@@ -160,7 +201,8 @@ export async function getTeamBattingContext(teamId) {
         avg: findStatValue(data, ["AVG"]),
         strikeouts: findStatValue(data, ["SO", "K"]),
       };
-    } catch {
+    } catch (err) {
+      warn("getTeamBattingContext", `team ${teamId}: request failed — ${err.message}`);
       return { avg: null, strikeouts: null };
     }
   });
