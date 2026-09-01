@@ -1,6 +1,7 @@
 const SPORTS = [
   { key: "nfl", label: "NFL" },
   { key: "nba", label: "NBA" },
+  { key: "mlb", label: "MLB" },
 ];
 
 export default function SportSwitcher({ sport, onChange }) {

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { requireSport, SPORTS } from "./sports.js";
 import { getUpcomingGames, getGameInjuries } from "./games.js";
 import { getEdgeFeed, getGameOddsTable } from "./edges.js";
+import { getTrendFeed, getTrendPropOdds } from "./trends.js";
 import { combineLegs } from "./parlay.js";
 import { addBet, betLogSummary, deleteBet, listBets, updateBet } from "./betlog.js";
 import { hasOddsApiKey } from "./oddsApi.js";
@@ -64,6 +65,31 @@ app.get(
     const sport = requireSport(req.params.sport);
     const threshold = req.query.threshold != null ? Number(req.query.threshold) : 0.02;
     res.json(await getEdgeFeed(sport, { threshold }));
+  })
+);
+
+app.get(
+  "/api/:sport/trends",
+  wrap(async (req, res) => {
+    const sport = requireSport(req.params.sport);
+    if (sport.key !== "mlb") {
+      return res.json({ trends: [], gamesScanned: 0, note: `Trends are only built out for MLB right now.` });
+    }
+    const hoursAhead = req.query.hoursAhead != null ? Number(req.query.hoursAhead) : 36;
+    res.json(await getTrendFeed(sport, { hoursAhead }));
+  })
+);
+
+app.get(
+  "/api/:sport/trends/prop-odds",
+  wrap(async (req, res) => {
+    const sport = requireSport(req.params.sport);
+    if (!hasOddsApiKey()) return res.json({ available: false, outcomes: [] });
+    const { eventId, player, type } = req.query;
+    if (!eventId || !player || !type) {
+      return res.status(400).json({ error: "eventId, player, and type query params are required" });
+    }
+    res.json(await getTrendPropOdds(sport, eventId, player, type));
   })
 );
 

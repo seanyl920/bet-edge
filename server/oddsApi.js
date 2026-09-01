@@ -53,6 +53,29 @@ export async function getOdds(sport, { markets = "h2h,spreads,totals", regions =
 }
 
 /**
+ * Player-prop odds for one event. This is a separate, per-event endpoint on
+ * The Odds API (player props aren't included in the bulk /odds call) and
+ * costs credits per call — only ever call this on-demand from a user click
+ * ("check odds" on a trend card), never in an automatic poll/refresh loop.
+ * Cached briefly just to survive an accidental double-click.
+ */
+export async function getPlayerProps(sport, oddsEventId, markets) {
+  if (!hasOddsApiKey()) {
+    const err = new Error("ODDS_API_KEY not configured");
+    err.code = "NO_ODDS_KEY";
+    throw err;
+  }
+  const key = `oddsapi:props:${sport.oddsApiKey}:${oddsEventId}:${markets}`;
+  return cached(key, 10 * 60 * 1000, async () => {
+    const url =
+      `${BASE}/sports/${sport.oddsApiKey}/events/${oddsEventId}/odds?apiKey=${process.env.ODDS_API_KEY}` +
+      `&regions=us&markets=${markets}&oddsFormat=american&dateFormat=iso`;
+    const { data, quota } = await getJson(url);
+    return { event: data, quota };
+  });
+}
+
+/**
  * Historical/closing snapshot for one event, used for CLV capture.
  * The Odds API's historical endpoint costs extra credits and requires a
  * paid plan on some tiers — this call is only made on-demand (never polled)

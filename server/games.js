@@ -2,7 +2,12 @@ import { getScoreboard, getTeamInjuries } from "./espn.js";
 import { getEloEngine } from "./eloBootstrap.js";
 import { getGameWeather, weatherImpactNote } from "./weather.js";
 import { NFL_STADIUMS } from "./stadiums.js";
+import { MLB_PARKS } from "./parks.js";
 import { round } from "./oddsMath.js";
+
+function venueTable(sportKey) {
+  return sportKey === "mlb" ? MLB_PARKS : sportKey === "nfl" ? NFL_STADIUMS : null;
+}
 
 /** Upcoming games for a sport, enriched with Elo ratings and (NFL) weather. */
 export async function getUpcomingGames(sport) {
@@ -22,11 +27,11 @@ export async function getUpcomingGames(sport) {
 
       let weather = null;
       if (sport.outdoor) {
-        const stadium = NFL_STADIUMS[ev.home.abbreviation];
-        if (stadium?.roof === "open") {
+        const venue = venueTable(sport.key)?.[ev.home.abbreviation];
+        if (venue?.roof === "open") {
           try {
-            const w = await getGameWeather(stadium.lat, stadium.lon, ev.date);
-            weather = w ? { ...w, note: weatherImpactNote(w) } : null;
+            const w = await getGameWeather(venue.lat, venue.lon, ev.date);
+            weather = w ? { ...w, note: weatherImpactNote(w, sport.key), venueNote: venue.note ?? null } : null;
           } catch {
             weather = null;
           }

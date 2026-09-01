@@ -132,6 +132,15 @@ button.primary:disabled { opacity: 0.6; cursor: default; }
 .stake-input { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; font-size: 0.85rem; }
 .stake-input input { width: 90px; background: var(--panel-alt); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 6px; }
 
+.trend-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.trend-card { background: var(--panel-alt); border: 1px solid var(--border); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+.trend-card-header { display: flex; gap: 6px; }
+.trend-card h3 { margin: 0; font-size: 0.95rem; }
+.trend-context { font-size: 0.8rem; display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.trend-card-footer { margin-top: 6px; }
+.trend-odds-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; }
+.trend-odds-list li { display: flex; justify-content: space-between; align-items: center; background: var(--panel); border-radius: 6px; padding: 6px 8px; }
+
 .summary-strip { display: flex; gap: 24px; margin-bottom: 16px; flex-wrap: wrap; }
 .summary-strip .stat { font-size: 1.3rem; font-weight: 600; }
 .inline-input { width: 70px; background: var(--panel-alt); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 4px; }

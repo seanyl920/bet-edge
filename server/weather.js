@@ -26,7 +26,7 @@ export async function getGameWeather(lat, lon, isoKickoff) {
 
     const url =
       `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-      `&hourly=temperature_2m,precipitation_probability,wind_speed_10m,wind_gusts_10m` +
+      `&hourly=temperature_2m,precipitation_probability,wind_speed_10m,wind_gusts_10m,wind_direction_10m` +
       `&temperature_unit=fahrenheit&wind_speed_unit=mph&forecast_days=16&timezone=UTC`;
     const data = await getJson(url);
     const times = data?.hourly?.time ?? [];
@@ -38,17 +38,47 @@ export async function getGameWeather(lat, lon, isoKickoff) {
       precipProbability: data.hourly.precipitation_probability[idx],
       windMph: data.hourly.wind_speed_10m[idx],
       windGustMph: data.hourly.wind_gusts_10m[idx],
+      windDirectionDeg: data.hourly.wind_direction_10m[idx],
+      windDirectionCompass: degToCompass(data.hourly.wind_direction_10m[idx]),
     };
   });
 }
 
-/** Plain-language note on whether weather is likely to matter for this game. */
-export function weatherImpactNote(weather) {
+const COMPASS_POINTS = [
+  "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+  "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+];
+
+/** Meteorological wind direction (degrees, direction wind is coming FROM) -> compass label. */
+export function degToCompass(deg) {
+  if (deg == null || !Number.isFinite(deg)) return null;
+  return COMPASS_POINTS[Math.round(deg / 22.5) % 16];
+}
+
+/**
+ * Plain-language note on whether weather is likely to matter for this game.
+ * Deliberately does NOT claim a "blowing out"/"blowing in" verdict for MLB —
+ * that needs each park's precise orientation, which this app doesn't have a
+ * verified source for (see parks.js). It reports wind speed + raw direction
+ * and leaves the interpretation to you.
+ */
+export function weatherImpactNote(weather, sport = "nfl") {
   if (!weather) return null;
   const notes = [];
-  if (weather.windMph >= 20) notes.push("high wind — passing/kicking accuracy at risk");
-  else if (weather.windMph >= 15) notes.push("breezy — modest passing/kicking impact");
-  if (weather.precipProbability >= 60) notes.push("likely precipitation");
-  if (weather.tempF <= 25) notes.push("very cold");
+  const windLabel = weather.windDirectionCompass
+    ? `${weather.windDirectionCompass} wind at ${Math.round(weather.windMph)}mph`
+    : `wind at ${Math.round(weather.windMph)}mph`;
+
+  if (sport === "mlb") {
+    if (weather.windMph >= 12) notes.push(`${windLabel} — worth checking against this park's orientation for fly-ball effect`);
+    if (weather.precipProbability >= 50) notes.push("chance of rain/delay");
+    if (weather.tempF <= 45) notes.push("cold — ball carries less");
+    if (weather.tempF >= 90) notes.push("hot — ball carries a bit more");
+  } else {
+    if (weather.windMph >= 20) notes.push(`${windLabel} — high wind, passing/kicking accuracy at risk`);
+    else if (weather.windMph >= 15) notes.push(`${windLabel} — breezy, modest passing/kicking impact`);
+    if (weather.precipProbability >= 60) notes.push("likely precipitation");
+    if (weather.tempF <= 25) notes.push("very cold");
+  }
   return notes.length ? notes.join("; ") : "no significant weather impact expected";
 }

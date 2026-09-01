@@ -33,6 +33,20 @@ export const SPORTS = {
     },
     outdoor: false, // all games are indoor; weather is irrelevant
   },
+  mlb: {
+    key: "mlb",
+    label: "MLB",
+    espnSport: "baseball",
+    espnLeague: "mlb",
+    oddsApiKey: "baseball_mlb",
+    elo: {
+      k: 4, // MLB has ~10x the games of NFL and is high-variance per game; move ratings slowly
+      homeFieldAdvantage: 24,
+      pointsPerElo: 60, // run differential moves much less per Elo point than NFL/NBA scoring margin
+      marginSigma: 3.4, // approx std dev of MLB run differential
+    },
+    outdoor: true,
+  },
 };
 
 export function requireSport(sportParam) {

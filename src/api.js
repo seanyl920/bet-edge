@@ -19,6 +19,11 @@ export const api = {
   injuries: (sport, eventId) => request(`/${sport}/games/${eventId}/injuries`),
   oddsTable: (sport, eventId) => request(`/${sport}/games/${eventId}/odds`),
   edges: (sport, threshold) => request(`/${sport}/edges?threshold=${threshold}`),
+  trends: (sport) => request(`/${sport}/trends`),
+  trendPropOdds: (sport, eventId, player, type) =>
+    request(
+      `/${sport}/trends/prop-odds?eventId=${encodeURIComponent(eventId)}&player=${encodeURIComponent(player)}&type=${encodeURIComponent(type)}`
+    ),
   combineParlay: (legs) =>
     request("/parlay/combine", { method: "POST", body: JSON.stringify({ legs }) }),
   listBets: () => request("/bets"),
