@@ -9,6 +9,11 @@
 // unlike edges.js, there's no market price backing these out. It's a
 // "how many real supporting factors stacked up" count, shown as such, so you
 // can apply your own judgment on top rather than trusting a black box.
+//
+// Once your bet log has enough graded history in a given (trend type, score)
+// bucket — see calibration.js — this ranks by that bucket's real hit rate
+// instead of the heuristic score, and says so on every trend so it's never a
+// silent change (`rankedBy: "calibration"` vs `"heuristic"`).
 
 import { getScoreboard } from "./espn.js";
 import { getProbablePitchers, getTeamBatters, getBatterGameLog, getPitcherGameLog, getPitcherSeasonStats, getTeamBattingContext } from "./mlbData.js";
@@ -17,6 +22,7 @@ import { getGameWeather, weatherImpactNote } from "./weather.js";
 import { MLB_PARKS } from "./parks.js";
 import { getOdds, getPlayerProps } from "./oddsApi.js";
 import { matchEspnEvent } from "./teamMatch.js";
+import { getCalibration, lookupTrendCalibration } from "./calibration.js";
 import { cached } from "./cache.js";
 
 const HIT_STREAK_MIN = 5;
@@ -225,10 +231,25 @@ async function buildTrends(sport, hoursAhead) {
     })
   );
 
-  const trends = perGame.flat().sort((a, b) => b.score - a.score);
+  const rawTrends = perGame.flat();
+
+  const { buckets, minSample } = await getCalibration();
+  const trends = rawTrends
+    .map((t) => {
+      const calibration = lookupTrendCalibration(buckets, sport.key, t.type, t.score);
+      return {
+        ...t,
+        calibration, // {rate, n} once a bucket has enough graded history, else null
+        rankedBy: calibration ? "calibration" : "heuristic",
+        rank: calibration ? calibration.rate * 20 : t.score,
+      };
+    })
+    .sort((a, b) => b.rank - a.rank);
+
   return {
     trends,
     gamesScanned: games.length,
+    calibrationMinSample: minSample,
     thresholds: {
       hitStreak: HIT_STREAK_MIN,
       rbiStreak: RBI_STREAK_MIN,

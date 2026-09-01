@@ -9,9 +9,21 @@ import { getUpcomingGames, getGameInjuries } from "./games.js";
 import { getEdgeFeed, getGameOddsTable } from "./edges.js";
 import { getTrendFeed, getTrendPropOdds } from "./trends.js";
 import { combineLegs } from "./parlay.js";
-import { addBet, betLogSummary, deleteBet, listBets, updateBet } from "./betlog.js";
+import { addBet, betLogSummary, deleteBet, getBet, listBets, updateBet } from "./betlog.js";
+import { analyzeBet } from "./postmortem.js";
+import { getCalibration } from "./calibration.js";
 import { hasOddsApiKey } from "./oddsApi.js";
 import { clearCache } from "./cache.js";
+
+const SETTLED_RESULTS = new Set(["win", "loss", "push"]);
+
+/** Runs the postmortem for a bet and persists it. Shared by the manual route and the auto-trigger on grading. */
+async function runAnalysis(id) {
+  const bet = await getBet(id);
+  if (!bet) return null;
+  const postmortem = await analyzeBet(bet);
+  return updateBet(id, { postmortem });
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -108,6 +120,22 @@ app.get(
 );
 
 app.post(
+  "/api/bets/:id/analyze",
+  wrap(async (req, res) => {
+    const updated = await runAnalysis(req.params.id);
+    if (!updated) return res.status(404).json({ error: "bet not found" });
+    res.json(updated);
+  })
+);
+
+app.get(
+  "/api/calibration",
+  wrap(async (req, res) => {
+    res.json(await getCalibration());
+  })
+);
+
+app.post(
   "/api/bets",
   wrap(async (req, res) => {
     res.status(201).json(await addBet(req.body));
@@ -117,7 +145,16 @@ app.post(
 app.patch(
   "/api/bets/:id",
   wrap(async (req, res) => {
-    res.json(await updateBet(req.params.id, req.body));
+    const updated = await updateBet(req.params.id, req.body);
+    // Grading a bet (win/loss/push) automatically kicks off the postmortem —
+    // "feed it back" shouldn't require a separate manual step for the common
+    // case. analyze() is also exposed standalone for re-runs (game wasn't
+    // final yet, ESPN hiccup, older bet you want to re-grade).
+    if (SETTLED_RESULTS.has(req.body?.result) && !("postmortem" in req.body)) {
+      const analyzed = await runAnalysis(req.params.id);
+      return res.json(analyzed ?? updated);
+    }
+    res.json(updated);
   })
 );
 

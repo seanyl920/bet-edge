@@ -30,4 +30,6 @@ export const api = {
   addBet: (bet) => request("/bets", { method: "POST", body: JSON.stringify(bet) }),
   updateBet: (id, patch) => request(`/bets/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteBet: (id) => request(`/bets/${id}`, { method: "DELETE" }),
+  analyzeBet: (id) => request(`/bets/${id}/analyze`, { method: "POST" }),
+  calibration: () => request("/calibration"),
 };

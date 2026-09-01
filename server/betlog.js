@@ -36,6 +36,12 @@ function computeClv(americanOddsTaken, americanOddsClose) {
   return Math.round((yourDecimal / closeDecimal - 1) * 10000) / 100; // %
 }
 
+/** Raw bet record (no CLV mapping) — used by the postmortem engine, which needs the full `legs` array. */
+export async function getBet(id) {
+  const bets = await readAll();
+  return bets.find((b) => b.id === id) ?? null;
+}
+
 export async function listBets() {
   const bets = await readAll();
   return bets
@@ -59,6 +65,7 @@ export async function addBet(bet) {
     legs: bet.legs ?? null, // present for parlays
     closingAmericanOdds: null,
     result: "pending", // pending | win | loss | push | void
+    postmortem: null, // filled in by analyzeBet() once the bet is settled — see postmortem.js
   };
   bets.push(entry);
   await writeAll(bets);
@@ -73,7 +80,7 @@ export async function updateBet(id, patch) {
     err.status = 404;
     throw err;
   }
-  const allowed = ["closingAmericanOdds", "result", "stake"];
+  const allowed = ["closingAmericanOdds", "result", "stake", "postmortem"];
   for (const key of allowed) {
     if (key in patch) bets[idx][key] = patch[key];
   }

@@ -123,6 +123,18 @@ export default function EdgeFeed({ sport, onAddLeg, onSelectGame }) {
                         americanOdds: e.americanOdds,
                         trueProb: e.modelProb,
                         sport,
+                        commenceTime: e.commenceTime,
+                        // Snapshot for later grading (see postmortem.js) — what the
+                        // model/market believed at bet time, so we can check it later.
+                        context: {
+                          kind: "edge",
+                          side: e.side,
+                          team: e.team,
+                          line: e.line ?? null,
+                          modelProb: e.modelProb,
+                          marketProb: e.marketProb,
+                          sampleSize: e.sampleSize,
+                        },
                       })
                     }
                   >

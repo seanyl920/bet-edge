@@ -39,7 +39,9 @@ export default function ParlaySlip({ legs, onRemove, onClear, onLogged }) {
         americanOdds: legs.length === 1 ? legs[0].americanOdds : combined?.combinedAmericanOdds,
         stake,
         modelProb: legs.length === 1 ? legs[0].trueProb : combined?.naive.trueProb,
-        legs: legs.length > 1 ? legs : null,
+        // Always store the full leg array (including single-leg bets) — this is
+        // the snapshot the postmortem engine grades against later.
+        legs,
       });
       onLogged();
       onClear();

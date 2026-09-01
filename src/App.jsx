@@ -6,6 +6,7 @@ import Games from "./components/Games.jsx";
 import GameDetail from "./components/GameDetail.jsx";
 import ParlaySlip from "./components/ParlaySlip.jsx";
 import BetLog from "./components/BetLog.jsx";
+import Calibration from "./components/Calibration.jsx";
 import Disclaimer from "./components/Disclaimer.jsx";
 
 const TABS = [
@@ -13,6 +14,7 @@ const TABS = [
   { key: "trends", label: "Trends" },
   { key: "games", label: "Games" },
   { key: "betlog", label: "Bet log" },
+  { key: "calibration", label: "Calibration" },
 ];
 
 export default function App() {
@@ -51,6 +53,7 @@ export default function App() {
           {tab === "trends" && <TrendFeed sport={sport} onAddLeg={addLeg} />}
           {tab === "games" && <Games sport={sport} onSelectGame={setOpenGame} />}
           {tab === "betlog" && <BetLog refreshKey={betLogKey} />}
+          {tab === "calibration" && <Calibration refreshKey={betLogKey} />}
         </div>
         <aside className="app-slip">
           <ParlaySlip

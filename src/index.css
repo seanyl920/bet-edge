@@ -141,6 +141,14 @@ button.primary:disabled { opacity: 0.6; cursor: default; }
 .trend-odds-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; }
 .trend-odds-list li { display: flex; justify-content: space-between; align-items: center; background: var(--panel); border-radius: 6px; padding: 6px 8px; }
 
+.postmortem-actions { display: flex; gap: 8px; align-items: center; }
+.postmortem-row td { background: var(--panel-alt); }
+.postmortem { padding: 6px 0; }
+.postmortem ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.postmortem li { border-left: 3px solid var(--border); padding-left: 8px; }
+.postmortem li.pos { border-left-color: var(--pos); }
+.postmortem li.neg { border-left-color: var(--neg); }
+
 .summary-strip { display: flex; gap: 24px; margin-bottom: 16px; flex-wrap: wrap; }
 .summary-strip .stat { font-size: 1.3rem; font-weight: 600; }
 .inline-input { width: 70px; background: var(--panel-alt); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 4px; }

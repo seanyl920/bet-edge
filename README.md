@@ -43,9 +43,58 @@ is even more explicitly "here's a lead," not "here's a probability."
 - **Bet log & CLV** — log bets (single or parlay), record the closing line,
   and track ROI and average closing-line value — the standard way to tell if
   you have real edge independent of whether individual bets won.
+- **Postmortem & calibration (the feedback loop)** — grade a bet win/loss/push
+  and the app automatically looks up what actually happened in each leg
+  (did the streak continue? which side covered?) and shows a plain
+  right/wrong breakdown, not just the bet's overall result. Every graded leg
+  feeds a **Calibration** table: real hit rates per trend type/score bucket
+  and per edge-feed model-probability bucket, computed fresh from your own
+  bet log. Once a bucket has enough graded history (15+ legs), the Trends
+  feed automatically ranks by that bucket's real hit rate instead of the
+  heuristic score — visibly, with a badge showing which one drove the
+  ranking. See [How the feedback loop works](#how-the-feedback-loop-works).
 - **Context, not just numbers** — Elo ratings, sample size (games actually
   folded into the rating — trust it less early in a season), injury reports,
   and outdoor-stadium weather (NFL and MLB).
+
+## How the feedback loop works
+
+1. **Snapshot at bet time.** Every leg added to the slip (from the Edge feed
+   or Trends) carries a `context` blob with whatever made it a candidate —
+   for a trend leg, the player, streak value, matchup label, and score; for
+   an edge-feed leg, the side, line, model probability, and market
+   probability. This is stored with the bet in `data/bets.json`.
+2. **Grade the bet.** In the Bet log tab, mark a bet win/loss/push (and
+   optionally its closing line, for CLV). This automatically triggers a
+   postmortem.
+3. **Postmortem** (`server/postmortem.js`) looks up, per leg, what actually
+   happened: for a trend leg, it re-fetches that player's game log and reads
+   the actual stat for that specific game (hits, HRs, RBIs, or Ks) and
+   compares it to the line/side you bet; for an edge-feed leg, it fetches
+   the final score and checks who actually covered. Each leg comes back
+   marked ✓ / ✗ / unknown (unknown when the game isn't final yet, or an
+   older bet is missing the snapshot data), with a plain-language note —
+   never a silent guess. You can re-run this anytime from the Bet log tab
+   ("Re-analyze") if a game wasn't final yet the first time.
+4. **Calibration** (`server/calibration.js`) aggregates every graded leg
+   across your whole bet log into buckets — e.g. "MLB hitStreak, score
+   9-11" — and computes the real hit rate and sample size for each. This is
+   a plain frequency table, not a trained model: no bucket is trusted (or
+   shown as "calibrated") until it has at least 15 graded legs, since a
+   handful of bets can make a fluke streak look meaningful.
+5. **Auto-applied ranking.** The Trends feed checks calibration for each
+   trend's bucket before ranking. If that bucket is calibrated, the trend is
+   ranked by the real historical hit rate (shown as a green "% historically"
+   badge) instead of the heuristic score (blue "score N" badge) — so the
+   feed actually gets better calibrated to your specific betting patterns
+   over time, and it's always visible on the card which one is driving the
+   order.
+
+This only ever learns from bets **you** logged and graded — there's no
+external dataset or pretraining behind it, so early on (few graded bets)
+almost nothing will be calibrated, and that's expected. The Calibration tab
+shows the full table, including buckets that aren't calibrated yet, so you
+can see how close a signal is to having enough data behind it.
 
 ## Honesty & limits
 
@@ -90,6 +139,18 @@ is even more explicitly "here's a lead," not "here's a probability."
   (bad shapes return empty/null instead of crashing), but if the trend feed
   comes back thin, that file is the first place to check against what ESPN
   is actually returning.
+- **Calibration is a frequency table over your own small sample, not a
+  trained model.** 15 graded legs is enough to stop a single lucky/unlucky
+  bet from dominating a bucket, not enough to be statistically rigorous.
+  Treat a freshly-calibrated bucket as "this has actually happened at this
+  rate so far," not as a guarantee it continues — and keep grading bets, since
+  every bucket's confidence only grows with more data.
+- **Postmortem grading depends on the same less-verified MLB endpoints**
+  flagged above for the trend feed itself, plus the assumption that a
+  player's game log lines up with the bet's `eventId` or date. When it
+  can't confirm a match, a leg comes back "unknown" rather than a guessed
+  hit/miss — but that means some legs may never get graded even after the
+  game is long over, depending on what ESPN actually returns.
 - **This is a personal, single-user tool.** The bet log is a local JSON
   file, there's no auth, and it isn't built for sharing bets or data with
   other people.
@@ -119,7 +180,9 @@ browser (React)
    ├──► /api/mlb/trends/prop-odds ─► Express ──► The Odds API (on-demand, per click only)
    ├──► /api/:sport/games/:id/odds ─► Express ──► The Odds API (cached, keyed)
    ├──► /api/parlay/combine ──► Express ──► pure odds math + correlation heuristic
-   └──► /api/bets           ──► Express ──► data/bets.json
+   ├──► /api/bets, /api/bets/:id  ──► Express ──► data/bets.json
+   ├──► /api/bets/:id/analyze ──► Express ──► ESPN (per-leg outcome lookup) ──► data/bets.json
+   └──► /api/calibration    ──► Express ──► aggregates graded legs from data/bets.json
 ```
 
 The Odds API key stays server-side (`.env`, never shipped to the browser) and
@@ -190,6 +253,8 @@ server/
   edges.js                          Combines model + market into the edge feed
   parlay.js                          Correlation-aware parlay combination
   betlog.js                           Bet log CRUD + CLV
+  postmortem.js                         Grades a settled bet's legs against what actually happened
+  calibration.js                          Aggregates graded legs into real hit-rate buckets
   weather.js                           Open-Meteo (NFL/MLB outdoor venues)
   stadiums.js                           NFL stadium coordinates + roof type
   parks.js                               MLB ballpark coordinates + roof type (no orientation/wind-direction claims — see caveats)
@@ -199,13 +264,14 @@ src/
   api.js             Frontend fetch wrappers
   components/
     EdgeFeed.jsx      Model-vs-market edge table
-    TrendFeed.jsx       MLB streak+matchup trend cards, on-demand prop odds
+    TrendFeed.jsx       MLB streak+matchup trend cards, on-demand prop odds, calibration badges
     Games.jsx             Upcoming games grid (Elo, weather)
     GameDetail.jsx          Per-game odds table + injuries
     ParlaySlip.jsx            Slip, correlation warnings, bet logging
-    BetLog.jsx                  History, CLV, ROI
-    SportSwitcher.jsx            NFL/NBA/MLB toggle
-    Disclaimer.jsx                 Always-visible honesty banner
+    BetLog.jsx                  History, CLV, ROI, postmortem breakdown per bet
+    Calibration.jsx               Real hit-rate table across all graded bets
+    SportSwitcher.jsx               NFL/NBA/MLB toggle
+    Disclaimer.jsx                    Always-visible honesty banner
 ```
 
 ## Extending it
@@ -227,6 +293,13 @@ src/
 - **Real correlation model**: `parlay.js`'s haircut is intentionally crude;
   a same-game copula or historical same-game-parlay hit-rate table would
   slot in there.
+- **Extend calibration to the edge feed's ranking too**: `calibration.js`
+  already buckets edge-feed legs by (sport, market, model-probability
+  decile) — `getCalibration()` returns them alongside trend buckets. Only
+  `trends.js` currently *acts* on its buckets (auto-ranking); wiring
+  `edges.js` to blend a calibrated bucket rate into its EV calculation
+  would be the equivalent move for the edge feed, left out for now to avoid
+  changing what "EV" means there without you asking for it.
 - **Verified park orientation**: if you can source a trustworthy per-park
   home-plate-to-outfield azimuth table, `weather.js` already computes wind
   direction in degrees (`windDirectionDeg`) — adding a real "blowing out/in"

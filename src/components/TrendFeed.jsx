@@ -36,7 +36,15 @@ function TrendCard({ trend, sport, onAddLeg }) {
     <div className="trend-card">
       <div className="trend-card-header">
         <span className="badge badge-mid">{TYPE_LABEL[trend.type] ?? trend.type}</span>
-        <span className="badge badge-ok">score {trend.score}</span>
+        {trend.calibration ? (
+          <span className="badge badge-ok" title={`Ranked by your own graded history (n=${trend.calibration.n}), not the heuristic score.`}>
+            {(trend.calibration.rate * 100).toFixed(0)}% historically (n={trend.calibration.n})
+          </span>
+        ) : (
+          <span className="badge badge-mid" title="No calibrated history yet for this bucket — ranked by the heuristic score instead.">
+            score {trend.score}
+          </span>
+        )}
       </div>
       <h3>{trend.headline}</h3>
       <div className="muted small">
@@ -96,6 +104,21 @@ function TrendCard({ trend, sport, onAddLeg }) {
                     americanOdds: o.price,
                     trueProb: impliedProb(o.price),
                     sport,
+                    commenceTime: trend.commenceTime,
+                    // Snapshot for later grading (see postmortem.js) — what the
+                    // trend actually claimed at bet time, so "what went right/wrong"
+                    // has something concrete to compare against.
+                    context: {
+                      kind: "trend",
+                      trendType: trend.type,
+                      playerId: trend.player.id,
+                      playerName: trend.player.name,
+                      streakValue: trend.streakValue,
+                      matchupLabel: trend.matchupLabel,
+                      score: trend.score,
+                      propSide: o.side,
+                      propPoint: o.point,
+                    },
                   })
                 }
               >
@@ -134,8 +157,11 @@ export default function TrendFeed({ sport, onAddLeg }) {
 
       <p className="muted small">
         Score is a heuristic count of stacked factors (streak length + matchup quality) — <strong>not</strong> a
-        win probability. Weather is shown for context only; this app doesn't claim to know which way the wind
-        blows relative to any specific park's layout (see README).
+        win probability. Once a (trend type, score) bucket has {data?.calibrationMinSample ?? 15}+ graded bets in
+        your log (Bet log tab → Analyze), this ranks by that bucket's real hit rate instead — shown as a green
+        "% historically" badge instead of the score badge. See the Calibration tab for the full table. Weather is
+        shown for context only; this app doesn't claim to know which way the wind blows relative to any specific
+        park's layout (see README).
       </p>
 
       {loading && <p className="muted">Loading…</p>}
