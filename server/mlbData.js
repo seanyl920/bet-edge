@@ -130,22 +130,35 @@ function parseGameLog(data, statAliases, debugLabel) {
     return [];
   }
 
-  // First category observed to be the full/overall log across every player
-  // checked while diagnosing this — later ones look like splits (vs LHP,
-  // home/away, etc.) based on varying category counts per player.
-  const category = categories[0];
-  const games = (category.events ?? [])
-    .map((ev) => {
+  // Confirmed against a live response: `categories` isn't one category per
+  // season with the "real" one conveniently at index 0 — it's split into
+  // several (by month, going by the displayName/splitType seen on a live
+  // response, e.g. "august"), and which split lands at index 0 isn't stable
+  // across players. Taking only categories[0] silently truncated most
+  // players to a few weeks of games, which (combined with different players
+  // landing on different splits) is what produced the earlier bug: every
+  // batter showing an implausible double-digit hit streak. Merge every
+  // category's games instead, deduped by event id, to get the real log.
+  const byEvent = new Map();
+  for (const category of categories) {
+    for (const ev of category.events ?? []) {
+      if (!ev?.eventId) continue;
       const stats = ev.stats ?? [];
       const values = {};
       for (const [key, idx] of Object.entries(indices)) {
         values[key] = idx === -1 ? null : Number(stats[idx]) || 0;
       }
       const dateStr = eventDates[ev.eventId]?.gameDate ?? ev.gameDate ?? ev.date ?? null;
-      return { eventId: ev.eventId ?? null, date: dateStr, ...values };
-    })
-    // Only count games the player actually appeared in, where we can tell.
-    .filter((g) => Object.values(g).some((v) => typeof v === "number" && v > 0) || g.appeared);
+      byEvent.set(ev.eventId, { eventId: ev.eventId, date: dateStr, ...values });
+    }
+  }
+
+  const games = [...byEvent.values()].filter((g) =>
+    Object.entries(g).some(([key, v]) => key !== "eventId" && key !== "date" && typeof v === "number" && v > 0)
+  );
+  if (games.length === 0 && byEvent.size > 0) {
+    warn(debugLabel, `merged ${categories.length} categories (${byEvent.size} raw games) but every game had all-zero stats — likely an index problem, not a real 0-for-everything player.`);
+  }
 
   games.sort((a, b) => new Date(b.date ?? 0) - new Date(a.date ?? 0));
   return games;
