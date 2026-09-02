@@ -31,7 +31,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+// This is a personal tool with no auth, so it must not trust arbitrary
+// origins to read/write the bet log or trigger odds-API calls — restrict
+// CORS to the dev frontend rather than the previous wide-open default
+// (any origin, incl. a malicious page in another tab, could otherwise call
+// these routes with the browser's ambient credentials). See README's
+// Known-issue history.
+const ALLOWED_ORIGIN = process.env.CORS_ORIGIN || "http://localhost:5173";
+app.use(cors({ origin: ALLOWED_ORIGIN }));
 app.use(express.json());
 
 function wrap(handler) {
@@ -171,12 +178,17 @@ app.post(
 app.patch(
   "/api/bets/:id",
   wrap(async (req, res) => {
-    const updated = await updateBet(req.params.id, req.body);
+    // `postmortem` is a server-computed field (see runAnalysis / betlog.js's
+    // updateBet comment) — it feeds the calibration engine, so a client
+    // can't be allowed to write it directly here. Strip it before it ever
+    // reaches updateBet, regardless of what the request body contains.
+    const { postmortem: _ignoredClientPostmortem, ...patch } = req.body ?? {};
+    const updated = await updateBet(req.params.id, patch);
     // Grading a bet (win/loss/push) automatically kicks off the postmortem —
     // "feed it back" shouldn't require a separate manual step for the common
     // case. analyze() is also exposed standalone for re-runs (game wasn't
     // final yet, ESPN hiccup, older bet you want to re-grade).
-    if (SETTLED_RESULTS.has(req.body?.result) && !("postmortem" in req.body)) {
+    if (SETTLED_RESULTS.has(patch.result)) {
       const analyzed = await runAnalysis(req.params.id);
       return res.json(analyzed ?? updated);
     }

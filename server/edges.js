@@ -71,18 +71,36 @@ function spreadPrices(oddsEvent) {
   return { home, away };
 }
 
-function modalPoint(prices) {
+// Confirmed real bug: picking the most-common home point and the most-common
+// away point INDEPENDENTLY doesn't guarantee they're the same market — e.g.
+// home -3 could win its own vote while away +3.5 wins a separate vote, and
+// the two would then get treated as complementary sides of one 2-outcome
+// market (devigged together, and the away probability derived as
+// 1-coverProbHome) when they're not actually paired that way by any book.
+// Find the most-common (home, away) PAIR as actually quoted together, per
+// book, instead.
+function modalSpreadPair(homePrices, awayPrices) {
+  const byBook = new Map();
+  for (const h of homePrices) byBook.set(h.book, { ...(byBook.get(h.book) || {}), homePoint: h.point });
+  for (const a of awayPrices) byBook.set(a.book, { ...(byBook.get(a.book) || {}), awayPoint: a.point });
+
   const counts = new Map();
-  for (const p of prices) counts.set(p.point, (counts.get(p.point) || 0) + 1);
-  let best = null;
+  for (const { homePoint, awayPoint } of byBook.values()) {
+    if (homePoint == null || awayPoint == null) continue;
+    const key = `${homePoint}|${awayPoint}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  let bestKey = null;
   let bestCount = 0;
-  for (const [point, count] of counts) {
+  for (const [key, count] of counts) {
     if (count > bestCount) {
-      best = point;
+      bestKey = key;
       bestCount = count;
     }
   }
-  return best;
+  if (!bestKey) return { homePoint: null, awayPoint: null };
+  const [homePoint, awayPoint] = bestKey.split("|").map(Number);
+  return { homePoint, awayPoint };
 }
 
 /** Devigged consensus probability + best (line-shopped) price for each side. */
@@ -215,8 +233,7 @@ export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
     }
 
     const { home: spHome, away: spAway } = spreadPrices(oddsEvent);
-    const homePoint = modalPoint(spHome);
-    const awayPoint = modalPoint(spAway);
+    const { homePoint, awayPoint } = modalSpreadPair(spHome, spAway);
     if (homePoint != null && awayPoint != null) {
       const homeAtPoint = spHome.filter((p) => p.point === homePoint);
       const awayAtPoint = spAway.filter((p) => p.point === awayPoint);
@@ -224,6 +241,17 @@ export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
       const coverProbHome = coverProbability({
         expectedMarginHome: prediction.expectedMarginHome,
         marketSpreadHome: homePoint,
+        marginSigma: prediction.marginSigma,
+      });
+      // Computed independently from home's side, not derived as
+      // 1-coverProbHome — that shortcut silently assumed awayPoint is
+      // exactly -homePoint, which modalSpreadPair no longer guarantees is
+      // even the intent (real books usually do quote symmetric pairs, but
+      // this no longer breaks if one doesn't). Mirrors coverProbability's
+      // own math from the away side's perspective.
+      const coverProbAway = coverProbability({
+        expectedMarginHome: -prediction.expectedMarginHome,
+        marketSpreadHome: awayPoint,
         marginSigma: prediction.marginSigma,
       });
 
@@ -238,7 +266,7 @@ export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
       if (spread.bestAway) {
         const edge = makeEdge({
           event, sport, market: "spread", side: "away", team: event.away.name, line: awayPoint,
-          best: spread.bestAway, modelProb: 1 - coverProbHome, marketProb: spread.consensus.away,
+          best: spread.bestAway, modelProb: coverProbAway, marketProb: spread.consensus.away,
           sampleSize: prediction.sampleSize,
         });
         if (edge.ev >= threshold) edges.push(edge);

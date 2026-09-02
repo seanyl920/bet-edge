@@ -147,6 +147,80 @@ All five above caught by a second pass of the same external code review
 that found the first six — again, every claim verified against the actual
 source before being accepted, not taken on faith.
 
+- **A team's home and away spread lines from different books could get
+  paired into one nonsense line.** `edges.js` picked the "modal" home point
+  and the modal away point independently across all books, then treated
+  them as one market — but different books don't always quote symmetric
+  home/away lines (e.g. home -3.5 at one book, away +3 at another), so the
+  two independently-most-common points weren't necessarily from the same
+  actual market. Fixed: `modalSpreadPair()` now finds the most common
+  *home+away pair as quoted by the same book*, so the line paired against
+  is one a book actually offered, not a mix-and-match of two.
+- **The same-game correlation "haircut" pushed probability the wrong way
+  for the one relationship it could have gotten exactly right.** The old
+  `parlay.js` multiplied every same-game combination's naive probability by
+  a flat 0.85, regardless of which markets were involved — but a team's own
+  moneyline and spread in the same game aren't just "correlated," one
+  strictly implies the other (a favorite covering implies winning outright;
+  an underdog winning outright implies covering any positive spread), so
+  their real joint probability is `min(p_ml, p_spread)`, not naive
+  multiplication shrunk by an arbitrary 15%. For a typical pair that's
+  *higher* than the naive number, not lower — the flat haircut had the
+  direction backwards for exactly the case this app could prove. Fixed:
+  `parlay.js` now computes the exact joint probability for a same-team
+  moneyline+spread pair via `min()`, and drops the haircut for every other
+  same-game combination (whose real direction isn't provable) in favor of a
+  plain warning instead of a fabricated number.
+- **Overlapping bet-log writes could race and silently drop a write.**
+  `betlog.js`'s add/update/delete each did read-whole-file →
+  modify → write-whole-file with no serialization — two requests close
+  together (e.g. grading a bet, which triggers an automatic postmortem
+  write right after) could both read the same pre-mutation state and the
+  later write would clobber the earlier one. A crash mid-write could also
+  leave truncated, unreadable JSON. Fixed: every mutation now queues behind
+  the previous one via an in-process promise-chain mutex (`serialize()` —
+  sufficient here since this app only ever runs one server process), and
+  writes go to a temp file that's atomically renamed over the real one, so
+  a reader only ever sees a fully-old or fully-new file.
+- **Bet log routes accepted unvalidated input.** Stake, American odds, and
+  `result` on add/update had no validation — a negative stake, a
+  zero/non-numeric odds value, or an arbitrary `result` string would be
+  written straight into the log and quietly corrupt downstream math (ROI,
+  ✓/✗ grading, calibration buckets). Fixed: `betlog.js` now validates stake
+  (finite, ≥ 0), American odds (finite, nonzero) and `result` (one of
+  `pending`/`win`/`loss`/`push`/`void`) before any write, rejecting bad
+  input with a clear 400 instead of persisting it.
+- **A voided bet counted as "pending" forever.** `betLogSummary()` only
+  recognized `win`/`loss`/`push` as settled, so a `void` result (money
+  back, nothing at risk) never left the pending count even though it's a
+  finished bet. Fixed: summary now tracks `financial` results
+  (win/loss/push — affect staked/profit/ROI) and `finalized` results
+  (those plus void — affect the settled/pending split) separately, and
+  reports a `voidBets` count.
+- **The API accepted requests from any origin, and a client could write
+  its own fabricated `postmortem`.** `index.js` had `app.use(cors())` with
+  no restriction — any page in any tab could call this app's routes with
+  the browser's ambient session — and the `PATCH /api/bets/:id` route
+  forwarded `req.body` straight into `updateBet()`, so a client could set
+  `postmortem` directly even though it's meant to be a server-computed
+  field that feeds the calibration engine. Fixed: CORS is now restricted
+  to the frontend's own origin (`http://localhost:5173` by default,
+  configurable via `CORS_ORIGIN`), and the PATCH route strips any
+  client-supplied `postmortem` before it reaches `updateBet()` — confirmed
+  by sending a request with a fabricated `postmortem` and checking the
+  stored bet still had `postmortem: null`. This app still has no
+  authentication at all (see Honesty & limits) — the CORS fix keeps a
+  random web page from silently using your browser to hit the API, it
+  doesn't turn this into a multi-user-safe service.
+
+All six above caught by a third pass of the same external code review, and
+each one verified directly against the source and, where practical, against
+a running server (a numeric test confirming `coverProbHome + coverProbAway
+== 1` for the spread-pairing fix; a concurrent-write test firing 20
+simultaneous `addBet()` calls and confirming all 20 landed; a live `curl`
+against a running instance confirming the CORS header and the stripped
+`postmortem`) before being accepted, not taken on faith.
+
 ## Daily longshot parlay
 
 Once a day (the first time you load the tab after the calendar date rolls
@@ -300,8 +374,11 @@ can see how close a signal is to having enough data behind it.
   hit/miss — but that means some legs may never get graded even after the
   game is long over, depending on what ESPN actually returns.
 - **This is a personal, single-user tool.** The bet log is a local JSON
-  file, there's no auth, and it isn't built for sharing bets or data with
-  other people.
+  file and there's still no authentication — CORS is restricted to the
+  frontend's own origin (see Known-issue history), which stops a random web
+  page from using your browser to hit the API, but anyone with direct
+  network access to the port can still call it. It isn't built for sharing
+  bets or data with other people.
 - Sports betting is regulated differently by state/country and carries real
   financial risk. Know your local laws and never bet more than you can
   afford to lose. If it stops being fun, the National Problem Gambling
@@ -449,9 +526,30 @@ src/
 - **Better model**: `elo.js`/`eloBootstrap.js` are the only places that would
   need to change to swap in a stronger model — everything downstream just
   consumes `{homeWinProb, expectedMarginHome, sampleSize}`.
-- **Real correlation model**: `parlay.js`'s haircut is intentionally crude;
-  a same-game copula or historical same-game-parlay hit-rate table would
-  slot in there.
+- **Real correlation model**: `parlay.js` only proves one relationship
+  exactly (a same-team moneyline+spread pair, via `min()`); every other
+  same-game combination gets a warning, not a number, because its
+  direction isn't provable with what this app has. A same-game copula or a
+  historical same-game-parlay hit-rate table would let more of those get a
+  real adjustment instead of just a warning.
+- **Automated tests + CI/lint**: this project has been validated the whole
+  way through by targeted node scripts run ad hoc during development (a
+  parlay math check here, a concurrent-write test there — see the
+  Known-issue history for specifics) plus manual boot-testing, not a
+  standing test suite. Turning the more reusable of those checks into a
+  real `test/` directory wired into CI (and adding basic linting) would
+  catch a regression automatically instead of relying on the next code
+  review to find it.
+- **Vite is on 5.4.x**: works fine, but a major-version upgrade would pull
+  in whatever security patches have landed since. Not urgent for a
+  localhost-only dev tool with no untrusted input reaching the bundler,
+  but worth doing eventually.
+- **Record which book a bet was actually placed at**: `clv.js`'s "capture
+  close" button approximates CLV using the best price *across* books,
+  because a leg's snapshot never records which specific book it was placed
+  at (see Known-issue history). Adding a `book` field when a leg is added
+  to the slip would let CLV be computed against that same book's closing
+  price — the textbook definition — instead of the current approximation.
 - **Extend calibration to the edge feed's ranking too**: `calibration.js`
   already buckets edge-feed legs by (sport, market, model-probability
   decile) — `getCalibration()` returns them alongside trend buckets. Only
