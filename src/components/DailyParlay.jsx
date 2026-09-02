@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { api } from "../api.js";
 
 function fmtOdds(american) {
@@ -120,24 +120,33 @@ export default function DailyParlay({ onAddLeg }) {
             </thead>
             <tbody>
               {data.legs.map((leg, i) => (
-                <tr key={i}>
-                  <td>
-                    <span className={`badge ${leg.source === "trend" ? "badge-mid" : "badge-ok"}`}>{leg.source}</span>
-                  </td>
-                  <td>
-                    {leg.matchup}
-                    <div className="muted small">{leg.sport?.toUpperCase()}</div>
-                  </td>
-                  <td>
-                    {leg.label}
-                    {leg.source === "trend" && <div className="muted small">player prop, not a team total</div>}
-                  </td>
-                  <td>{fmtOdds(leg.americanOdds)}</td>
-                  <td>
-                    {pct(leg.trueProb)}
-                    <div className="muted small">{PROB_SOURCE_LABEL[leg.probSource] ?? leg.probSource}</div>
-                  </td>
-                </tr>
+                <Fragment key={i}>
+                  <tr>
+                    <td>
+                      <span className={`badge ${leg.source === "trend" ? "badge-mid" : "badge-ok"}`}>{leg.source}</span>
+                    </td>
+                    <td>
+                      {leg.matchup}
+                      <div className="muted small">{leg.sport?.toUpperCase()}</div>
+                    </td>
+                    <td>
+                      {leg.label}
+                      {leg.source === "trend" && <div className="muted small">player prop, not a team total</div>}
+                    </td>
+                    <td>{fmtOdds(leg.americanOdds)}</td>
+                    <td>
+                      {pct(leg.trueProb)}
+                      <div className="muted small">{PROB_SOURCE_LABEL[leg.probSource] ?? leg.probSource}</div>
+                    </td>
+                  </tr>
+                  {leg.reason && (
+                    <tr className="daily-parlay-reason-row">
+                      <td colSpan={5} className="muted small">
+                        Why: {leg.reason}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>

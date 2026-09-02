@@ -71,6 +71,10 @@ function warn(fn, detail) {
   console.warn(`[dailyParlay] ${fn}: ${detail}`);
 }
 
+function pctStr(p) {
+  return p == null ? "—" : `${Math.round(p * 100)}%`;
+}
+
 /** Every priced moneyline/spread side across every sport, not just the ones that clear an EV threshold — we want the full "favorites" universe here, not just flagged edges. Reuses the already-cached bulk odds fetch, so this costs no extra API credits. */
 async function edgeCandidates() {
   const out = [];
@@ -122,6 +126,10 @@ async function edgeCandidates() {
           trueProb: e.blendedProb,
           probSource: "elo-blended",
           decimalOdds: americanToDecimal(e.americanOdds),
+          reason:
+            e.marketProb != null
+              ? `Elo (${e.sampleSize}-game sample) has ${e.team} at ${pctStr(e.modelProb)}, market consensus ${pctStr(e.marketProb)} — blended to ${pctStr(e.blendedProb)}.`
+              : `Elo (${e.sampleSize}-game sample) has ${e.team} at ${pctStr(e.modelProb)}; no market consensus available to blend against.`,
         });
       }
     } catch (err) {
@@ -200,6 +208,10 @@ async function trendCandidates() {
         trueProb,
         probSource: t.calibration?.rate != null ? "calibration" : "devig",
         decimalOdds: americanToDecimal(best.price),
+        reason:
+          t.calibration?.rate != null
+            ? `${t.headline} — this app has graded ${t.calibration.n} similar legs at a real ${pctStr(t.calibration.rate)} hit rate.`
+            : `${t.headline}${t.matchupLabel && t.matchupLabel !== "unknown" ? ` — ${t.matchupLabel}` : ""} (priced off the devigged prop line, not this app's own model — not enough graded history yet for this bucket).`,
       });
     } catch (err) {
       warn("trendCandidates", `${t.player?.name ?? t.eventId}: threw — ${err.message}`);

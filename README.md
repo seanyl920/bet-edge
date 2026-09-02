@@ -410,6 +410,16 @@ place in the app that fetches them without you clicking anything, it's
 capped at `MAX_TREND_ODDS_CHECKS` (8) trend candidates per day, in
 `server/dailyParlay.js`.
 
+Each leg's row has a "Why" line underneath it explaining what actually made
+this app favor it: for an edge-feed leg, the Elo model's own probability and
+sample size alongside the market's consensus and where the two got blended
+to; for a trend leg, either its real calibrated hit rate (when this app has
+graded enough similar legs) or the streak/matchup context that produced it
+plus a note that it's priced off the devigged prop line, not this app's own
+model. This is meant as a quick sanity check, not a fresh analysis — cross-
+reference it against the actual streak/ERA/matchup numbers shown elsewhere
+before trusting it.
+
 ## How the feedback loop works
 
 1. **Snapshot at bet time.** Every leg added to the slip (from the Edge feed
