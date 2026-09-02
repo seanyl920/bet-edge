@@ -6,6 +6,7 @@ const TYPE_LABEL = {
   rbiStreak: "RBI streak",
   power: "Power",
   pitcherK: "Strikeouts",
+  vsTeamHistory: "Matchup history",
 };
 
 function fmtOdds(american) {
@@ -64,6 +65,9 @@ function TrendCard({ trend, sport, onAddLeg }) {
         )}
         {trend.opponent.teamBattingAvg != null && (
           <div className="muted small">Opposing lineup AVG: {trend.opponent.teamBattingAvg}</div>
+        )}
+        {trend.vsTeamNote && trend.type !== "vsTeamHistory" && (
+          <div className="muted small">Also: {trend.vsTeamNote} (this-season sample — see README caveat)</div>
         )}
         {trend.park && (
           <div className="muted small">

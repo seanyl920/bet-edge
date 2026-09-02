@@ -28,12 +28,15 @@ is even more explicitly "here's a lead," not "here's a probability."
   at or above your EV threshold.
 - **Trends (MLB)** — scans today's/tomorrow's probable batters and starters
   for hit/RBI/power streaks and strikeout streaks, attaches the matchup
-  context that makes a streak worth caring about (opposing starter's
-  ERA/WHIP, opposing lineup's batting average, ballpark and weather), and
-  ranks them by a transparent heuristic score — a count of stacked factors,
-  explicitly *not* a win probability. Each trend card has an on-demand
-  "check odds" button that looks up the matching player-prop line only when
-  you click it, to protect your Odds API free-tier quota.
+  context that makes a streak worth caring about (opposing starter's ERA,
+  opposing lineup's batting average, this-season history vs today's specific
+  opponent team, ballpark and weather), and ranks them by a transparent
+  heuristic score — a count of stacked factors, explicitly *not* a win
+  probability. A batter with real history against today's opponent (15+ AB,
+  hitting .300+) shows up even without a current streak, as its own
+  "Matchup history" trend. Each trend card has an on-demand "check odds"
+  button that looks up the matching player-prop line only when you click it,
+  to protect your Odds API free-tier quota.
 - **Line shopping** — full odds table per game across every book The Odds API
   covers (moneyline, spread/run-line, total).
 - **Parlay builder** — combine legs into a slip (from either feed); shows the
@@ -168,6 +171,16 @@ can see how close a signal is to having enough data behind it.
   direction and lets you apply your own knowledge of the specific park (a
   couple of well-known quirks, like Wrigley's lake winds and Coors' altitude,
   are called out as text notes instead of geometry).
+- **"Vs this team" history is this-season-only, and 15 at-bats is still a
+  small sample.** This app never got a reliable read on whether ESPN's
+  gamelog exposes prior seasons (see `server/mlbData.js`), so this can be
+  legitimately empty or thin for a team a batter has actually owned for
+  years, and a hot 15-AB stretch this year can just as easily be noise. The
+  minimum-AB gate (`VS_TEAM_MIN_AB` in `server/trends.js`) exists so it
+  isn't 3 lucky swings, not because 15 AB is statistically solid — read the
+  actual `H-for-AB` line, not just the average, before trusting it. "Vs this
+  specific pitcher" (a different, harder question) isn't built at all —
+  no verified data source for it yet.
 - **MLB's probable-pitcher and player-gamelog data comes from less
   consistently documented ESPN endpoints** than the team/schedule data the
   NFL/NBA side relies on (see `server/mlbData.js`). It's written defensively
@@ -325,6 +338,12 @@ src/
   specific data module like `mlbData.js` and a scoring function like
   `battingTrendsForTeam`, then route `/api/:sport/trends` to it in
   `server/index.js` instead of the current MLB-only check.
+- **"Vs this pitcher" history**: unlike "vs this team" (built, see above),
+  no source for batter-vs-specific-pitcher stats was ever found or verified.
+  ESPN's gamecast pages do sometimes show a "career vs this pitcher" box, so
+  the data likely exists somewhere in their API, but finding it means the
+  same live-diagnostic-script process used throughout this file's history —
+  see the git log for `server/mlbData.js` for what that process looks like.
 - **Better model**: `elo.js`/`eloBootstrap.js` are the only places that would
   need to change to swap in a stronger model — everything downstream just
   consumes `{homeWinProb, expectedMarginHome, sampleSize}`.

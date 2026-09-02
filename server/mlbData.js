@@ -176,8 +176,13 @@ function parseGameLog(data, statAliases, debugLabel, presenceAliases) {
         values[key] = idx === -1 ? null : Number(stats[idx]) || 0;
       }
       const presence = presenceIdx === -1 ? null : Number(stats[presenceIdx]) || 0;
-      const dateStr = eventDates[ev.eventId]?.gameDate ?? ev.gameDate ?? ev.date ?? null;
-      byEvent.set(ev.eventId, { eventId: ev.eventId, date: dateStr, presence, ...values });
+      const meta = eventDates[ev.eventId];
+      const dateStr = meta?.gameDate ?? ev.gameDate ?? ev.date ?? null;
+      // Confirmed present on a live response's data.events[id]: an
+      // `opponent` object with the team faced that game — used for "vs this
+      // team" matchup history (see streaks.js's vsTeamSplit).
+      const opponentTeamId = meta?.opponent?.id != null ? String(meta.opponent.id) : null;
+      byEvent.set(ev.eventId, { eventId: ev.eventId, date: dateStr, opponentTeamId, presence, ...values });
     }
   }
 
@@ -206,9 +211,11 @@ export async function getBatterGameLog(playerId) {
       // "H"/"HR"/"RBI"/"AB"/...) is preferred when present — both covered here.
       // Presence = at-bats: a real 0-for-4 game (H=0) must stay in the log to
       // correctly break a hit streak, not get dropped as "didn't play".
+      // AB requested as a real named stat (not just the presence check) so
+      // "vs this team" batting average can be computed from the log.
       return parseGameLog(
         data,
-        { H: ["H", "hits"], HR: ["HR", "homeRuns"], RBI: ["RBI", "RBIs"] },
+        { H: ["H", "hits"], HR: ["HR", "homeRuns"], RBI: ["RBI", "RBIs"], AB: ["AB", "atBats"] },
         `getBatterGameLog(${playerId})`,
         ["AB", "atBats"]
       );

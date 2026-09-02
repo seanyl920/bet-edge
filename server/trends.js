@@ -17,7 +17,7 @@
 
 import { getScoreboard } from "./espn.js";
 import { getProbablePitchers, getTeamBatters, getBatterGameLog, getPitcherGameLog, getPitcherSeasonStats, getTeamBattingContext } from "./mlbData.js";
-import { consecutiveStreak, countInLastN } from "./streaks.js";
+import { consecutiveStreak, countInLastN, vsTeamSplit } from "./streaks.js";
 import { getGameWeather, weatherImpactNote } from "./weather.js";
 import { MLB_PARKS } from "./parks.js";
 import { getOdds, getPlayerProps } from "./oddsApi.js";
@@ -37,7 +37,31 @@ const PROP_MARKET = {
   power: "batter_home_runs",
   rbiStreak: "batter_rbis",
   pitcherK: "pitcher_strikeouts",
+  vsTeamHistory: "batter_hits",
 };
+
+// "Vs this team" history — this-season-only (see streaks.js's vsTeamSplit),
+// so the bar is deliberately not tiny: 15 AB is still a small sample by any
+// serious statistical standard, but it's enough that it's not just 3 lucky
+// swings, and it's honestly labeled either way (see formatVsTeam below).
+const VS_TEAM_MIN_AB = 15;
+const VS_TEAM_HOT_AVG = 0.3;
+const VS_TEAM_VERY_HOT_AVG = 0.35;
+
+function formatAvg(avg) {
+  return avg == null ? "—" : avg.toFixed(3).replace(/^0/, "");
+}
+
+function vsTeamContext(split, oppTeamName) {
+  if (split.AB < VS_TEAM_MIN_AB || split.avg == null) return { bonus: 0, note: null };
+  if (split.avg >= VS_TEAM_VERY_HOT_AVG) {
+    return { bonus: 2, note: `hitting ${formatAvg(split.avg)} vs ${oppTeamName} this season (${split.H}-for-${split.AB}, ${split.games}g)` };
+  }
+  if (split.avg >= VS_TEAM_HOT_AVG) {
+    return { bonus: 1, note: `hitting ${formatAvg(split.avg)} vs ${oppTeamName} this season (${split.H}-for-${split.AB}, ${split.games}g)` };
+  }
+  return { bonus: 0, note: null };
+}
 
 function pitcherMatchupLabel(era) {
   if (era == null) return { label: "unknown", bonus: 0 };
@@ -100,6 +124,9 @@ async function battingTrendsForTeam({ event, batterTeamId, batterTeamName, oppTe
       const hrStreak = consecutiveStreak(log, (g) => g.HR >= 1);
       const hrIn10 = countInLastN(log, 10, (g) => g.HR >= 1);
 
+      const split = vsTeamSplit(log, oppTeamId);
+      const vsTeam = vsTeamContext(split, oppTeamName);
+
       const base = {
         eventId: event.id,
         commenceTime: event.date,
@@ -108,30 +135,32 @@ async function battingTrendsForTeam({ event, batterTeamId, batterTeamName, oppTe
         opponent: { team: oppTeamName, pitcher: oppPitcher },
         pitcherStats,
         matchupLabel: matchup.label,
+        vsTeamNote: vsTeam.note,
         park: park ? { name: park.name, note: park.note ?? null } : null,
         weather,
       };
 
+      const batterTrends = [];
       if (hitStreak >= HIT_STREAK_MIN) {
-        trends.push({
+        batterTrends.push({
           ...base,
           type: "hitStreak",
           headline: `${batter.name} has a hit in ${hitStreak} straight games`,
           streakValue: hitStreak,
-          score: Math.min(hitStreak, 12) + matchup.bonus,
+          score: Math.min(hitStreak, 12) + matchup.bonus + vsTeam.bonus,
         });
       }
       if (rbiStreak >= RBI_STREAK_MIN) {
-        trends.push({
+        batterTrends.push({
           ...base,
           type: "rbiStreak",
           headline: `${batter.name} has an RBI in ${rbiStreak} straight games`,
           streakValue: rbiStreak,
-          score: Math.min(rbiStreak, 10) + matchup.bonus,
+          score: Math.min(rbiStreak, 10) + matchup.bonus + vsTeam.bonus,
         });
       }
       if (hrStreak >= HR_STREAK_MIN || hrIn10 >= HR_HOT_IN_10_MIN) {
-        trends.push({
+        batterTrends.push({
           ...base,
           type: "power",
           headline:
@@ -139,9 +168,24 @@ async function battingTrendsForTeam({ event, batterTeamId, batterTeamName, oppTe
               ? `${batter.name} has homered in ${hrStreak} straight games`
               : `${batter.name} has ${hrIn10} HR in his last 10 games`,
           streakValue: hrStreak >= HR_STREAK_MIN ? hrStreak : hrIn10,
-          score: (hrStreak >= HR_STREAK_MIN ? hrStreak * 3 : hrIn10 * 2) + matchup.bonus,
+          score: (hrStreak >= HR_STREAK_MIN ? hrStreak * 3 : hrIn10 * 2) + matchup.bonus + vsTeam.bonus,
         });
       }
+
+      // A batter with no current streak can still be worth a look on
+      // "vs this team" history alone — surface it standalone rather than
+      // only ever as a bonus riding along on some other trend.
+      if (batterTrends.length === 0 && vsTeam.note) {
+        batterTrends.push({
+          ...base,
+          type: "vsTeamHistory",
+          headline: `${batter.name} is ${vsTeam.note}`,
+          streakValue: split.games,
+          score: Math.round(split.avg * 20) + Math.min(Math.floor(split.AB / 10), 3) + matchup.bonus,
+        });
+      }
+
+      trends.push(...batterTrends);
     })
   );
   return trends;
