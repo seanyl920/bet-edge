@@ -325,8 +325,28 @@ async function buildTrends(sport, hoursAhead) {
 
   const rawTrends = perGame.flat();
 
+  // A player can have more than one upcoming game inside this window (e.g.
+  // a getaway day — home today, away tomorrow against a different
+  // opponent). The streak/stat value behind a trend is one snapshot taken
+  // right now, not updated per game — so it's shown unchanged for both,
+  // even though whichever game happens first will have already moved that
+  // number (extended it, or ended it) by the time the later game is
+  // played. Showing the same "15 straight games" for both is misleading,
+  // not two independent signals — keep only the soonest upcoming game per
+  // player+trend-type. Different trend types for the same player/game
+  // (e.g. a hit streak and a power trend together) still both show.
+  const soonestByPlayerType = new Map();
+  for (const t of rawTrends) {
+    const key = `${t.player.id}:${t.type}`;
+    const existing = soonestByPlayerType.get(key);
+    if (!existing || new Date(t.commenceTime) < new Date(existing.commenceTime)) {
+      soonestByPlayerType.set(key, t);
+    }
+  }
+  const dedupedTrends = [...soonestByPlayerType.values()];
+
   const { buckets, minSample } = await getCalibration();
-  const trends = rawTrends
+  const trends = dedupedTrends
     .map((t) => {
       const calibration = lookupTrendCalibration(buckets, sport.key, t.type, t.score);
       return {

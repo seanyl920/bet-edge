@@ -221,6 +221,22 @@ simultaneous `addBet()` calls and confirming all 20 landed; a live `curl`
 against a running instance confirming the CORS header and the stripped
 `postmortem`) before being accepted, not taken on faith.
 
+- **The same player's same streak could show up twice, for two different
+  upcoming games, with the exact same number.** On a getaway day (a team's
+  home series ends and a road series against a different opponent starts
+  the very next day), a player can have two real games inside the Trends
+  feed's "today + tomorrow" window. Each game got its own trend card, but
+  the streak/stat value behind both is one snapshot taken right now — it
+  isn't advanced for whichever game happens first, so the later game's card
+  showed the same "N straight games" as the sooner one even though it'll
+  actually be different (extended, or broken) by the time that later game
+  is actually played. Reported by the user noticing the same player's hit
+  streak listed against two different opponents. Fixed: `trends.js` now
+  keeps only the soonest upcoming game's trend per player+trend-type;
+  different trend types for the same player and game (e.g. a hit streak
+  and a power trend together) still both show, since those aren't the same
+  stale-number problem.
+
 ## Daily longshot parlay
 
 Once a day (the first time you load the tab after the calendar date rolls
