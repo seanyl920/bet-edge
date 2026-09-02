@@ -12,6 +12,7 @@ import { getDailyParlay } from "./dailyParlay.js";
 import { combineLegs } from "./parlay.js";
 import { addBet, betLogSummary, deleteBet, getBet, listBets, updateBet } from "./betlog.js";
 import { analyzeBet } from "./postmortem.js";
+import { captureClosingPrice } from "./clv.js";
 import { getCalibration } from "./calibration.js";
 import { hasOddsApiKey } from "./oddsApi.js";
 import { clearCache } from "./cache.js";
@@ -140,6 +141,16 @@ app.post(
     const updated = await runAnalysis(req.params.id);
     if (!updated) return res.status(404).json({ error: "bet not found" });
     res.json(updated);
+  })
+);
+
+app.post(
+  "/api/bets/:id/capture-close",
+  wrap(async (req, res) => {
+    const bet = await getBet(req.params.id);
+    if (!bet) return res.status(404).json({ error: "bet not found" });
+    const closingAmericanOdds = await captureClosingPrice(bet);
+    res.json(await updateBet(req.params.id, { closingAmericanOdds }));
   })
 );
 

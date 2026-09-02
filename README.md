@@ -96,6 +96,56 @@ something turns out to be wrong, it goes here — not just fixed silently.
   from mean to median across books (`edges.js`), which blunts most of one
   book's pull on its own; full exclusion of the bet's own book was judged
   not worth the added complexity for the remaining benefit.
+- **A missing per-game date from ESPN could silently produce a wrong
+  streak.** `mlbData.js`'s merged game log sorted by `new Date(date ?? 0)` —
+  a null date (that field is explicitly best-effort) sorted to "oldest,"
+  which could bump the *actual* most recent game out of position and let an
+  older game get read as "today's." No error, just a confident-looking
+  streak computed on a misordered log. Fixed: games with no date are
+  excluded from a player's log entirely (logged via `[mlbData]` warn) rather
+  than guessed at — a shorter, correctly-ordered log beats a complete,
+  possibly-wrong one.
+- **Evening games could never grade, permanently.** Same UTC-vs-local root
+  cause as the daily-parlay rollover bug above, but a worse consequence:
+  `postmortem.js` queried ESPN for the game's final score using a UTC-sliced
+  date, so any game with a commence time past 8pm ET resolved to the *next*
+  calendar day — a day that game isn't on. The leg came back "not final yet"
+  and would return the exact same wrong answer on every future re-analyze,
+  forever. Since most MLB games are evening games, this meant most bets
+  silently never fed the calibration loop the whole feedback-loop section
+  above describes. Fixed by extracting the local-day logic
+  (`dateUtil.js`, shared with the daily parlay) and using it in
+  `postmortem.js` too.
+- **The Trends feed's `hoursAhead: 36` window never actually reached
+  tomorrow.** `getScoreboard(sport)` called with no `dates` param returns
+  only ESPN's default "today" window — so the 36-hour filter downstream had
+  nothing beyond today to filter in the first place. Fixed: `trends.js` now
+  fetches today's and tomorrow's dates explicitly and merges them before
+  applying the time-window filter.
+- **A per-game fetch to an endpoint that had never once worked.**
+  `trends.js` called the separate, never-verified `/overview` endpoint for
+  every opposing starter's ERA/WHIP/K9 — but every live run this app has
+  seen showed "WHIP —" on every card (ERA was always separately overridden
+  by the confirmed-working boxscore source). Dropped the call entirely
+  rather than keep paying for a fetch that has never once returned real
+  data; ERA (the only field actually used in scoring) is unaffected.
+- **Closing-line capture was fully manual, and a half-built auto-capture
+  function sat unused.** `oddsApi.js` had `getEventOddsSnapshot()`, labeled
+  "historical/closing snapshot" — but nothing called it, and its URL was
+  actually the *live* per-event odds endpoint, not a real historical-odds
+  product (a separate, likely paid tier this app was never wired to use).
+  Removed it and built `clv.js` + a "capture" button in the Bet log instead:
+  on click, it fetches the *current* best price across books for that leg's
+  exact selection and stores it as the closing line. This is a real
+  approximation, not textbook CLV — proper CLV compares your price to the
+  *same book's* closing price, but a leg's snapshot never recorded which
+  book it was placed at, so "best price across books, captured close to
+  first pitch" is what's actually captured. Only works for single-leg bets;
+  a parlay doesn't have one clean closing price the way a straight bet does.
+
+All five above caught by a second pass of the same external code review
+that found the first six — again, every claim verified against the actual
+source before being accepted, not taken on faith.
 
 ## Daily longshot parlay
 
@@ -351,14 +401,16 @@ server/
   teamMatch.js                    Matches ESPN events to Odds API events
   edges.js                          Combines model + market into the edge feed
   parlay.js                          Correlation-aware parlay combination
-  betlog.js                           Bet log CRUD + CLV
+  betlog.js                           Bet log CRUD (closing line stored manually or via clv.js)
   postmortem.js                         Grades a settled bet's legs against what actually happened
   calibration.js                          Aggregates graded legs into real hit-rate buckets
-  dailyParlay.js                            Auto-builds one +10000 "favorites" longshot parlay per day
+  clv.js                                    On-demand approximate closing-line capture
+  dailyParlay.js                              Auto-builds one +10000 "favorites" longshot parlay per day
   weather.js                           Open-Meteo (NFL/MLB outdoor venues)
   stadiums.js                           NFL stadium coordinates + roof type
   parks.js                               MLB ballpark coordinates + roof type (no orientation/wind-direction claims — see caveats)
-  cache.js                                 In-memory TTL cache
+  dateUtil.js                              Local-calendar-day helper (UTC's day boundary is wrong for this app's actual usage)
+  cache.js                                   In-memory TTL cache
 src/
   App.jsx           Tabs, sport switcher, slip state
   api.js             Frontend fetch wrappers

@@ -16,13 +16,14 @@
 // silent change (`rankedBy: "calibration"` vs `"heuristic"`).
 
 import { getScoreboard } from "./espn.js";
-import { getProbablePitchers, getTeamBatters, getBatterGameLog, getPitcherGameLog, getPitcherSeasonStats, getTeamBattingContext } from "./mlbData.js";
+import { getProbablePitchers, getTeamBatters, getBatterGameLog, getPitcherGameLog, getTeamBattingContext } from "./mlbData.js";
 import { consecutiveStreak, countInLastN, vsTeamSplit } from "./streaks.js";
 import { getGameWeather, weatherImpactNote } from "./weather.js";
 import { MLB_PARKS } from "./parks.js";
 import { getOdds, getPlayerProps } from "./oddsApi.js";
 import { matchEspnEvent } from "./teamMatch.js";
 import { getCalibration, lookupTrendCalibration } from "./calibration.js";
+import { localDateKey } from "./dateUtil.js";
 import { cached } from "./cache.js";
 
 const HIT_STREAK_MIN = 5;
@@ -102,10 +103,27 @@ function lineupMatchupLabel(teamAvg) {
 }
 
 async function gamesInWindow(sport, hoursAhead) {
-  const scoreboard = await getScoreboard(sport);
+  // getScoreboard(sport) with no dates param returns only ESPN's default
+  // "today" window (confirmed by every live test this app has seen) — so
+  // hoursAhead was silently a no-op past ~24h, never actually reaching
+  // tomorrow's slate. Fetch today's and tomorrow's dates explicitly and
+  // merge; that covers the full range a 36h-default window can reach
+  // without depending on an unverified multi-day `dates=` range syntax
+  // (single-day queries are the pattern already confirmed working
+  // elsewhere in this app, e.g. postmortem.js's grading). If hoursAhead is
+  // ever pushed past ~48h this would need a third day added.
+  const todayParam = localDateKey().replace(/-/g, "");
+  const tomorrowParam = localDateKey(new Date(Date.now() + 24 * 60 * 60 * 1000)).replace(/-/g, "");
+  const [today, tomorrow] = await Promise.all([
+    getScoreboard(sport, { datesParam: todayParam }),
+    getScoreboard(sport, { datesParam: tomorrowParam }),
+  ]);
+  const byId = new Map();
+  for (const e of [...today, ...tomorrow]) byId.set(e.id, e);
+
   const now = Date.now();
   const cutoff = now + hoursAhead * 60 * 60 * 1000;
-  return scoreboard.filter((e) => {
+  return [...byId.values()].filter((e) => {
     if (e.statusName !== "STATUS_SCHEDULED") return false;
     const t = new Date(e.date).getTime();
     return t >= now - 30 * 60 * 1000 && t <= cutoff; // small grace window for games just starting
@@ -128,12 +146,14 @@ async function getParkWeather(sport, homeAbbreviation, isoDate) {
 
 async function battingTrendsForTeam({ event, batterTeamId, batterTeamName, oppTeamId, oppTeamName, oppPitcher, park, weather }) {
   const batters = await getTeamBatters(batterTeamId);
-  // ERA from getProbablePitchers (pulled straight from a confirmed-working
-  // pregame boxscore) is preferred over the separate /overview endpoint
-  // below, whose response shape was never directly verified — WHIP/K9 still
-  // come from it, best-effort, for display only (not used in scoring).
-  const seasonStats = oppPitcher ? await getPitcherSeasonStats(oppPitcher.id) : { era: null, whip: null, k9: null };
-  const pitcherStats = { ...seasonStats, era: oppPitcher?.era ?? seasonStats.era };
+  // ERA comes from getProbablePitchers (pulled from a confirmed-working
+  // pregame boxscore). This used to also call getPitcherSeasonStats (the
+  // separate, never-verified /overview endpoint) for WHIP/K9 — dropped: in
+  // every live run this app has seen, that call consistently returned
+  // nulls (every trend card showed "WHIP —"), so it was a wasted fetch per
+  // game for two fields that never once had real data. era is not used in
+  // scoring, so its absence here doesn't change anything but display.
+  const pitcherStats = { era: oppPitcher?.era ?? null, whip: null, k9: null };
   const matchup = pitcherMatchupLabel(pitcherStats.era);
 
   const trends = [];

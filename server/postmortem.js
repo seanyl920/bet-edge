@@ -11,12 +11,17 @@
 import { requireSport } from "./sports.js";
 import { getScoreboard } from "./espn.js";
 import { getBatterGameLog, getPitcherGameLog } from "./mlbData.js";
+import { localDateKey } from "./dateUtil.js";
 
 const STAT_FOR_TREND_TYPE = { hitStreak: "H", rbiStreak: "RBI", power: "HR", pitcherK: "SO" };
 
+// Local day, not UTC — an evening game's commence time is often past
+// midnight UTC, which used to permanently return "not final yet" for it
+// (querying ESPN for the wrong calendar day, forever, on every re-analyze —
+// see README's Known-issue history).
 function toDatesParam(iso) {
-  if (!iso) return null;
-  return new Date(iso).toISOString().slice(0, 10).replace(/-/g, "");
+  const key = localDateKey(iso);
+  return key ? key.replace(/-/g, "") : null;
 }
 
 function baseInfo(leg) {
@@ -29,8 +34,11 @@ function findGameInLog(log, { eventId, isoDate }) {
     if (byId) return byId;
   }
   if (isoDate) {
-    const day = isoDate.slice(0, 10);
-    return log.find((g) => (g.date ?? "").slice(0, 10) === day) ?? null;
+    // Both sides converted to the same local day — g.date is also a UTC
+    // ISO timestamp from ESPN, so comparing raw UTC slices has the same
+    // wrong-day risk toDatesParam above was just fixed for.
+    const day = localDateKey(isoDate);
+    return log.find((g) => localDateKey(g.date) === day) ?? null;
   }
   return null;
 }

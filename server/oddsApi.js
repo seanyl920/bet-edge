@@ -74,22 +74,3 @@ export async function getPlayerProps(sport, oddsEventId, markets) {
     return { event: data, quota };
   });
 }
-
-/**
- * Historical/closing snapshot for one event, used for CLV capture.
- * The Odds API's historical endpoint costs extra credits and requires a
- * paid plan on some tiers — this call is only made on-demand (never polled)
- * when the user explicitly asks to capture a closing line.
- */
-export async function getEventOddsSnapshot(sport, eventId, { markets = "h2h" } = {}) {
-  if (!hasOddsApiKey()) {
-    const err = new Error("ODDS_API_KEY not configured");
-    err.code = "NO_ODDS_KEY";
-    throw err;
-  }
-  const url =
-    `${BASE}/sports/${sport.oddsApiKey}/events/${eventId}/odds?apiKey=${process.env.ODDS_API_KEY}` +
-    `&regions=us&markets=${markets}&oddsFormat=american&dateFormat=iso`;
-  const { data, quota } = await getJson(url);
-  return { event: data, quota };
-}

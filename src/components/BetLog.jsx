@@ -36,6 +36,8 @@ export default function BetLog({ refreshKey }) {
   const [state, setState] = useState({ loading: true, bets: [], summary: null });
   const [expanded, setExpanded] = useState(() => new Set());
   const [analyzing, setAnalyzing] = useState(null);
+  const [capturing, setCapturing] = useState(null);
+  const [captureError, setCaptureError] = useState(null);
 
   function reload() {
     setState((s) => ({ ...s, loading: true }));
@@ -62,6 +64,19 @@ export default function BetLog({ refreshKey }) {
       reload();
     } finally {
       setAnalyzing(null);
+    }
+  }
+
+  async function captureClose(id) {
+    setCapturing(id);
+    setCaptureError(null);
+    try {
+      await api.captureClose(id);
+      reload();
+    } catch (err) {
+      setCaptureError({ id, message: err.message });
+    } finally {
+      setCapturing(null);
     }
   }
 
@@ -144,6 +159,15 @@ export default function BetLog({ refreshKey }) {
                       patch(b.id, { closingAmericanOdds: Number(e.target.value) })
                     }
                   />
+                  <button
+                    className="link"
+                    title="Capture the current best price across books as an approximate closing line — call this close to first pitch, not after."
+                    disabled={capturing === b.id}
+                    onClick={() => captureClose(b.id)}
+                  >
+                    {capturing === b.id ? "…" : "capture"}
+                  </button>
+                  {captureError?.id === b.id && <div className="error small">{captureError.message}</div>}
                 </td>
                 <td className={b.clvPct > 0 ? "pos" : b.clvPct < 0 ? "neg" : ""}>
                   {b.clvPct != null ? `${b.clvPct}%` : "—"}

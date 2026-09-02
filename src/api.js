@@ -31,6 +31,7 @@ export const api = {
   updateBet: (id, patch) => request(`/bets/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteBet: (id) => request(`/bets/${id}`, { method: "DELETE" }),
   analyzeBet: (id) => request(`/bets/${id}/analyze`, { method: "POST" }),
+  captureClose: (id) => request(`/bets/${id}/capture-close`, { method: "POST" }),
   calibration: () => request("/calibration"),
   dailyParlay: () => request("/daily-parlay"),
   regenerateDailyParlay: () => request("/daily-parlay/regenerate", { method: "POST" }),

@@ -186,18 +186,30 @@ function parseGameLog(data, statAliases, debugLabel, presenceAliases) {
     }
   }
 
-  const games = [...byEvent.values()]
+  const appeared = [...byEvent.values()]
     .filter((g) =>
       g.presence != null
         ? g.presence > 0
         : Object.entries(g).some(([key, v]) => key !== "eventId" && key !== "date" && typeof v === "number" && v > 0)
     )
     .map(({ presence, ...rest }) => rest);
-  if (games.length === 0 && byEvent.size > 0) {
+  if (appeared.length === 0 && byEvent.size > 0) {
     warn(debugLabel, `merged ${categories.length} categories (${byEvent.size} raw games) but every game was filtered out as "didn't appear" — likely an index problem, not a real 0-for-everything player.`);
   }
 
-  games.sort((a, b) => new Date(b.date ?? 0) - new Date(a.date ?? 0));
+  // ESPN's per-game date (data.events[id].gameDate) is best-effort, not
+  // guaranteed — a null date can't be placed in chronological order, and
+  // silently sorting it to "oldest" (or worse, to wherever Map iteration
+  // happened to put it) risks a confidently wrong streak: the actual most
+  // recent game gets treated as old, an older game gets read as "today's."
+  // A shorter, correctly-ordered log is worth more than a complete,
+  // possibly-misordered one — drop undated games rather than guess.
+  const games = appeared.filter((g) => g.date != null);
+  if (games.length < appeared.length) {
+    warn(debugLabel, `${appeared.length - games.length} of ${appeared.length} game(s) had no date from ESPN and were excluded from the log rather than risk a misordered streak.`);
+  }
+
+  games.sort((a, b) => new Date(b.date) - new Date(a.date));
   return games;
 }
 

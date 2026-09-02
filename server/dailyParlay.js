@@ -20,6 +20,7 @@ import { getEdgeFeed } from "./edges.js";
 import { getTrendFeed, getTrendPropOdds } from "./trends.js";
 import { combineLegs } from "./parlay.js";
 import { americanToDecimal, devigMultiplicative } from "./oddsMath.js";
+import { localDateKey } from "./dateUtil.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, "..", "data");
@@ -42,20 +43,10 @@ const MIN_LEG_PROB = 0.5;
 // checking every trend candidate.
 const MAX_TREND_ODDS_CHECKS = 8;
 
-// Local calendar day, not UTC. UTC midnight is 7-8pm US Eastern (depending
-// on DST) — right in the middle of a real MLB evening slate, which was
-// rolling the "once per day" parlay over mid-betting-session. Hardcoded to
-// America/New_York since that's this app's actual usage; change the zone if
-// you're betting from somewhere else.
-const DAILY_PARLAY_TIMEZONE = "America/New_York";
-
+// See dateUtil.js — local calendar day, not UTC, for the same reason
+// postmortem.js needs it: UTC midnight is mid-evening for a US MLB slate.
 function todayKey() {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: DAILY_PARLAY_TIMEZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date()); // en-CA formats as YYYY-MM-DD
+  return localDateKey();
 }
 
 async function readStore() {
