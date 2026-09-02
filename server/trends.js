@@ -25,6 +25,7 @@ import { matchEspnEvent } from "./teamMatch.js";
 import { getCalibration, lookupTrendCalibration } from "./calibration.js";
 import { localDateKey } from "./dateUtil.js";
 import { cached } from "./cache.js";
+import { americanToDecimal, devigMultiplicative } from "./oddsMath.js";
 
 const HIT_STREAK_MIN = 5;
 const RBI_STREAK_MIN = 3;
@@ -358,7 +359,12 @@ async function buildTrends(sport, hoursAhead) {
   const { buckets, minSample } = await getCalibration();
   const trends = dedupedTrends
     .map((t) => {
-      const calibration = lookupTrendCalibration(buckets, sport.key, t.type, t.score);
+      // Every trend this app generates and ranks represents the "Over" side
+      // (a streak continuing, a K bar cleared — see the comment on this in
+      // dailyParlay.js's trendCandidates()), so that's the calibration
+      // bucket to rank against — never an Under bucket, which only exists
+      // because a user can manually log an Under from the raw odds list.
+      const calibration = lookupTrendCalibration(buckets, sport.key, t.type, "over", t.score);
       return {
         ...t,
         calibration, // {rate, n} once a bucket has enough graded history, else null
@@ -388,6 +394,52 @@ export async function getTrendFeed(sport, { hoursAhead = 36 } = {}) {
   // per-batter gamelogs for every scheduled game in the window) — cache the
   // assembled result, don't rebuild it on every page load.
   return cached(`mlb-trends:${sport.key}:${hoursAhead}`, 15 * 60 * 1000, () => buildTrends(sport, hoursAhead));
+}
+
+/**
+ * Mutates `outcomes` in place, adding `.trueProb` to each entry: a devigged
+ * probability computed only from Over/Under pairs at that exact same point,
+ * averaged across whichever books offer both sides there. An outcome with
+ * no matching pair at its own point (e.g. a book posts an Over with no
+ * corresponding Under) gets `trueProb: null` — never a number borrowed from
+ * a different line.
+ */
+function attachDevigProbs(outcomes) {
+  const byPoint = new Map();
+  for (const o of outcomes) {
+    const arr = byPoint.get(o.point) ?? [];
+    arr.push(o);
+    byPoint.set(o.point, arr);
+  }
+  for (const group of byPoint.values()) {
+    const byBook = new Map();
+    for (const o of group) {
+      o.trueProb = null; // default; only overwritten below when a real pair exists
+      if (o.side !== "Over" && o.side !== "Under") continue;
+      const entry = byBook.get(o.book) ?? {};
+      entry[o.side] = o;
+      byBook.set(o.book, entry);
+    }
+    const overProbs = [];
+    const underProbs = [];
+    for (const { Over, Under } of byBook.values()) {
+      if (!Over || !Under) continue;
+      const [pOver, pUnder] = devigMultiplicative([americanToDecimal(Over.price), americanToDecimal(Under.price)]);
+      if (pOver != null) {
+        overProbs.push(pOver);
+        underProbs.push(pUnder);
+      }
+    }
+    if (overProbs.length) {
+      const avgOver = overProbs.reduce((s, p) => s + p, 0) / overProbs.length;
+      const avgUnder = underProbs.reduce((s, p) => s + p, 0) / underProbs.length;
+      for (const o of group) {
+        if (o.side === "Over") o.trueProb = avgOver;
+        else if (o.side === "Under") o.trueProb = avgUnder;
+      }
+    }
+  }
+  return outcomes;
 }
 
 /**
@@ -422,5 +474,15 @@ export async function getTrendPropOdds(sport, espnEventId, playerName, trendType
       }
     }
   }
+  // Confirmed real bug: a caller (dailyParlay.js) was picking the
+  // highest-paying Over across every point mixed together, then pricing it
+  // against a probability averaged across every point too — a leg priced
+  // at, say, Over 1.5 could get assigned a probability that's really an
+  // average of the Over 1.5 AND Over 0.5 markets, which are different bets.
+  // Compute a devigged probability per exact point instead, and attach it
+  // to every outcome at that point, so any caller reading `.trueProb` off
+  // a specific outcome always gets the number that actually corresponds to
+  // that specific line — never mixed across points.
+  attachDevigProbs(outcomes);
   return { available: true, outcomes };
 }

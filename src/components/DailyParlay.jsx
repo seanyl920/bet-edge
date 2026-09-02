@@ -53,7 +53,14 @@ export default function DailyParlay({ onAddLeg }) {
         trueProb: leg.trueProb,
         sport: leg.sport,
         commenceTime: leg.commenceTime,
-        context: { kind: leg.source === "trend" ? "trend" : "edge" },
+        // Was just `{ kind: "trend" | "edge" }` — nowhere near enough for
+        // postmortem.js to grade this leg later (a trend leg needs
+        // playerId/trendType/propSide/propPoint at minimum; an edge leg
+        // needs side/team/line). dailyParlay.js now attaches the same
+        // full context shape EdgeFeed.jsx/TrendFeed.jsx do when a leg is
+        // added manually — just forward it here instead of rebuilding a
+        // thinner one.
+        context: leg.context ?? { kind: leg.source === "trend" ? "trend" : "edge" },
       });
     }
   }
@@ -102,6 +109,11 @@ export default function DailyParlay({ onAddLeg }) {
                 <span>
                   {pct(data.combined.correlationAdjusted.trueProb)} ·{" "}
                   {(data.combined.correlationAdjusted.ev * 100).toFixed(1)}% EV
+                  {data.combined.correlationAdjusted.payoutIsHypothetical && (
+                    <div className="muted small">
+                      priced against the naive product of individual legs — not a real quoted same-game price, see below
+                    </div>
+                  )}
                 </span>
               </div>
             )}

@@ -13,7 +13,13 @@ import { getScoreboard } from "./espn.js";
 import { getBatterGameLog, getPitcherGameLog } from "./mlbData.js";
 import { localDateKey } from "./dateUtil.js";
 
-const STAT_FOR_TREND_TYPE = { hitStreak: "H", rbiStreak: "RBI", power: "HR", pitcherK: "SO" };
+// vsTeamHistory was missing here — a real bug, confirmed live: a batter's
+// "vs this team" trend is a hits-based signal (see trends.js's vsTeamSplit/
+// vsTeamContext), so it needs "H" the same as hitStreak, but with no entry
+// at all `game[undefined]` was always `undefined`, meaning every
+// vsTeamHistory bet came back "Actual stat unavailable" regardless of what
+// actually happened.
+const STAT_FOR_TREND_TYPE = { hitStreak: "H", rbiStreak: "RBI", power: "HR", pitcherK: "SO", vsTeamHistory: "H" };
 
 // Local day, not UTC — an evening game's commence time is often past
 // midnight UTC, which used to permanently return "not final yet" for it
@@ -30,8 +36,16 @@ function baseInfo(leg) {
 
 function findGameInLog(log, { eventId, isoDate }) {
   if (eventId) {
-    const byId = log.find((g) => g.eventId != null && String(g.eventId) === String(eventId));
-    if (byId) return byId;
+    // Confirmed real bug: this used to fall through to the isoDate fallback
+    // below whenever eventId didn't match anything — but having an eventId
+    // at all means we KNOW which specific game this leg is about; if it's
+    // not in the log, that's a real gap (ESPN hasn't posted it yet, or
+    // something's off), not a reason to guess. Falling back to "any game
+    // this player had that same calendar day" is exactly wrong on a
+    // doubleheader day — it can silently grade the leg off the wrong game.
+    // Only fall back to date-matching when there's no eventId to check at
+    // all (an older bet that never captured one).
+    return log.find((g) => g.eventId != null && String(g.eventId) === String(eventId)) ?? null;
   }
   if (isoDate) {
     // Both sides converted to the same local day — g.date is also a UTC
@@ -41,6 +55,17 @@ function findGameInLog(log, { eventId, isoDate }) {
     return log.find((g) => localDateKey(g.date) === day) ?? null;
   }
   return null;
+}
+
+// A whole-number point (e.g. "Over 6" rather than the usual "Over 6.5") can
+// land exactly on the actual stat — a real push, not a loss. Checked
+// separately from evalOverUnder below (not folded into it) because `hit`
+// stays strictly true/false/null everywhere downstream (calibration.js and
+// analyzeBet() both do truthy/`!= null` checks on it) — a push has to come
+// out as null (not counted either way), never as some third truthy value
+// that would silently get counted as a win.
+function isPush(actual, point) {
+  return actual != null && point != null && actual === point;
 }
 
 function evalOverUnder(actual, side, point) {
@@ -71,12 +96,13 @@ async function gradeTrendLeg(leg) {
 
   const statKey = STAT_FOR_TREND_TYPE[ctx.trendType];
   const actual = game[statKey];
-  const hit = evalOverUnder(actual, ctx.propSide, ctx.propPoint);
+  const push = isPush(actual, ctx.propPoint);
+  const hit = push ? null : evalOverUnder(actual, ctx.propSide, ctx.propPoint);
 
   const predicted = `Predicted: ${ctx.streakValue ?? "?"}-game streak, ${ctx.matchupLabel ?? "matchup unknown"} (score ${ctx.score ?? "?"}).`;
   const actualText =
     actual != null
-      ? `Actual: ${statKey} = ${actual}${ctx.propSide && ctx.propPoint != null ? ` (needed ${ctx.propSide} ${ctx.propPoint})` : ""}.`
+      ? `Actual: ${statKey} = ${actual}${ctx.propSide && ctx.propPoint != null ? ` (needed ${ctx.propSide} ${ctx.propPoint})` : ""}${push ? " — push, landed exactly on the line, not counted." : ""}.`
       : "Actual stat unavailable.";
 
   return { ...baseInfo(leg), hit, note: `${predicted} ${actualText}` };

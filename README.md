@@ -400,6 +400,152 @@ from the start.
   case correctly caps at the top 3 by probability, and a zero-trend-
   candidate pool behaves identically to before (no regression).
 
+A fourth round of external review, again read against the actual source
+before anything was accepted — nine confirmed findings this time, all
+reproduced with a fixture before being fixed:
+
+- **Odds could get attached to the wrong game on a doubleheader day.**
+  `matchEspnEvent()` matched an Odds API event to an ESPN scoreboard event
+  by team names only — on a day when the same two teams play twice, both
+  games have identical team names, and `.find()` silently returned
+  whichever one happened to come first in the array, regardless of which
+  one the odds event's own `commence_time` actually corresponded to. Odds
+  for Game 2 could get displayed, priced, and graded against Game 1.
+  Fixed: when team names match more than one ESPN event, disambiguate by
+  closest start time — and refuse the match (return null) rather than
+  guess when the closest candidate isn't clearly closer than the next one
+  (within 30 minutes). Reproduced the exact bug live (Game 2's odds
+  landing on Game 1) and verified the fix resolves it, plus an
+  equidistant-in-time case correctly refuses to guess.
+- **A daily-parlay prop's price and its probability could come from two
+  different lines.** `trendCandidates()` picked the highest-paying Over
+  across every point offered (e.g. Over 0.5, Over 1.5 all mixed together),
+  then priced it against a probability averaged across every point too —
+  a leg priced at Over 1.5 could get assigned a probability that was
+  really part Over-0.5-market. Reproduced with a fixture matching the
+  report almost exactly: an Over 1.5 leg at +200 (a real ~32% probability)
+  came back assigned ~45%, non-favorite dressed up as a favorite. Fixed:
+  `getTrendPropOdds()` now computes a devigged probability per exact
+  point (grouping by point first, then by book within that point) and
+  attaches it to every outcome; `trendCandidates()` reads `best.trueProb`
+  directly instead of a separately-computed, unscoped average. Verified
+  against the exact cross-book scenario from the report, plus a
+  no-matching-pair case correctly staying null instead of guessing.
+- **Calibration mixed winning Under bets into the rate used for Over
+  picks.** `trendKey()` bucketed by `(sport, trendType, score)` — never
+  the bet's side. Every trend this app *generates* is framed as an Over,
+  but a user can manually add an Under from the raw odds list in
+  TrendFeed, and once graded it landed in the exact same bucket an Over
+  pick would later be ranked against. Reproduced with the report's own
+  numbers: 15 graded Under strikeout bets, all wins, produced a bucket
+  this app's own Over-side lookup would have happily used. Fixed: the key
+  now includes side; the app's own auto-ranking explicitly looks up the
+  "over" bucket (the only side it ever generates), so a manually-logged
+  Under's history no longer bleeds into it. Verified with a real
+  integration test through `betlog.js` + `calibration.js` together — the
+  Over-side lookup now correctly returns null while the Under-side lookup
+  correctly shows the real 100% rate.
+- **A same-game correlation-adjusted EV was computed against a payout
+  nobody quotes.** The exact-joint-probability fix from the previous round
+  (moneyline+spread pair, `min(p_ml, p_spread)`) is real, but it was still
+  priced against `combinedDecimalOdds` — the individual legs' prices
+  multiplied together, which is not what any book actually offers for a
+  correlated same-game combination (a real same-game-parlay price is set
+  by the book specifically to account for the correlation, and is
+  normally worse than this naive product for exactly that reason).
+  Reproduced the report's own case (a same-team ML+spread pair) and got a
+  +72.5% adjusted EV off a price nobody quoted. Fixed: not by inventing a
+  combined price this app has no access to, but by labeling it honestly —
+  a `payoutIsHypothetical` flag on the result, a warning added to
+  `correlationWarnings` (already rendered everywhere `combined` is shown)
+  spelling out why, and an inline caption in both the Parlay Slip and
+  Daily Parlay UI next to the number itself.
+- **Daily-parlay legs lost everything postmortem.js needs to grade them.**
+  `DailyParlay.jsx`'s "Add all to slip" sent `context: { kind: "trend" }` or
+  `{ kind: "edge" }` and nothing else — none of the player ID, prop
+  side/point, team/side/line, or model/market probabilities that
+  `EdgeFeed.jsx`/`TrendFeed.jsx` already capture when a leg is added
+  manually. A daily-parlay leg logged as a bet could never be properly
+  graded. Also found while fixing this: `commenceTime` was never copied
+  onto the leg objects at all (only used internally for the same-day
+  filter above), which `gradeEdgeLeg()` needs just to know which date to
+  ask ESPN for the final score — so even a leg with a real `eventId`
+  couldn't have been graded either. Fixed: `dailyParlay.js` now attaches
+  the exact same context shape and `commenceTime` the manual-add flows do;
+  `addAllToSlip()` just forwards it instead of rebuilding a thinner one.
+  Verified the resulting leg objects carry every field `postmortem.js`'s
+  grading functions actually read.
+- **Manually adding a trend leg from the odds list still forced a
+  meaningless 0% EV.** `TrendFeed.jsx` set `trueProb` to `impliedProb(o.price)`
+  — that price's own implied probability — so `expectedValue(trueProb,
+  that same price)` is exactly 0 by construction, every time. This is the
+  identical bug already fixed once for the daily parlay's auto-generated
+  legs; it had just quietly resurfaced on the manual-add path, which was
+  never touched by that fix. Fixed: now uses this app's own calibration
+  (Over side only) or the devigged per-point probability `getTrendPropOdds()`
+  now attaches to each outcome (see above) — and when neither is
+  available, the "+ Slip" button is disabled with an explanatory tooltip
+  instead of silently adding an unpriceable leg.
+- **"Matchup history" bets could never grade.** `STAT_FOR_TREND_TYPE` (the
+  map from trend type to the game-log stat to check) was missing
+  `vsTeamHistory` entirely — a real, offered trend type — so grading it
+  always read `game[undefined]` and returned "Actual stat unavailable,"
+  regardless of what actually happened. Fixed: added `vsTeamHistory: "H"`
+  (it's a hits-based signal, same as hitStreak).
+- **A prop landing exactly on a whole-number line was scored a clean loss
+  instead of a push.** `evalOverUnder()` used strict `>`/`<`, so 6
+  strikeouts against "Over 6" returned `false` — a real loss, not the push
+  it actually is. That false loss would then feed calibration.js a fake
+  miss. Fixed: an exact tie is now detected separately and graded `hit:
+  null` (not counted either way, same as "can't grade yet") with a note
+  explicitly saying "push" — not folded into `evalOverUnder`'s return
+  value itself, since that stays strictly true/false/null everywhere
+  downstream (calibration.js and the bet summary both do truthy checks on
+  it, and a truthy `"push"` string would have silently counted as a win).
+- **A missing game could get graded using a different game from the same
+  day.** `findGameInLog()` fell back to "any game this player had on the
+  same calendar day" whenever the leg's `eventId` didn't match anything in
+  the log — even though having an `eventId` at all means the specific game
+  is known, and not finding it is a real gap, not a reason to guess. On a
+  doubleheader day this could silently grade a leg against the wrong
+  game's stats. Reproduced exactly that: an unmatched `eventId` with a
+  same-day game present in the log returned that other game instead of
+  refusing. Fixed: only fall back to date-matching when there's no
+  `eventId` at all (an older bet that never captured one) — an eventId
+  that doesn't match anything now correctly returns null.
+
+Two of the review's "worth prioritizing" improvements were small and
+contained enough to fix alongside the confirmed bugs, rather than deferred:
+
+- **Concurrent requests for the same not-yet-cached key each ran their own
+  upstream fetch.** `cached()` only stored a value *after* awaiting `fn()`,
+  so three near-simultaneous calls (the review's own repro) made three
+  real fetches instead of sharing one — pure waste always, and a real
+  problem against The Odds API's tight free-tier quota specifically.
+  Fixed: the in-flight *promise* is stored immediately, so concurrent
+  callers share it; a rejection still isn't cached (removed on failure, so
+  the next call gets a fresh attempt instead of the same error replayed
+  for the rest of the TTL). Verified 3 concurrent calls now produce
+  exactly 1 upstream fetch, a cached hit still avoids a 4th, and a failed
+  first attempt doesn't poison a second, later call.
+- **Two concurrent requests could both build a fresh daily parlay at
+  once.** `getDailyParlay()` had no locking — two tabs loading the tab at
+  the same moment, or a regenerate click racing initial load, could both
+  decide nothing was cached yet and both call `build()`, wasting the
+  bounded player-prop lookups (the one place in this app that spends Odds
+  API credits without an explicit click) twice. Fixed the same way
+  `betlog.js` already serializes writes: every call now queues behind the
+  previous one, so only one build ever runs at a time, and a call that
+  ends up queued behind a same-day build reads that result back instead
+  of starting its own.
+
+The remaining improvements from this round (a shared, validated bet-leg
+schema across every feed; permanent regression tests and CI; showing
+calibration's uncertainty explicitly rather than a bare percentage;
+recording which specific sportsbook a bet was placed at for true CLV) are
+real, but bigger scope changes than fit in one review-response round — left
+as known future work rather than attempted partially.
+
 ## Daily longshot parlay
 
 Once a day (the first time you load the tab after the calendar date rolls
@@ -734,10 +880,20 @@ src/
   real `test/` directory wired into CI (and adding basic linting) would
   catch a regression automatically instead of relying on the next code
   review to find it.
-- **Vite is on 5.4.x**: works fine, but a major-version upgrade would pull
-  in whatever security patches have landed since. Not urgent for a
-  localhost-only dev tool with no untrusted input reaching the bundler,
-  but worth doing eventually.
+- **`npm audit` currently reports 5 vulnerabilities (4 moderate, 1 high),
+  in two clusters, checked directly rather than taken on a reviewer's
+  count.** `esbuild`/Vite (moderate — the dev server can be made to proxy
+  requests for any site that gets you to open a malicious page while it's
+  running; irrelevant once built, and this is a localhost-only dev tool)
+  needs Vite 8.x to clear. `qs`/`body-parser`/Express (the rest, including
+  the high one) needs Express 5.x. Both are breaking major-version bumps —
+  `npm audit fix` (no `--force`) was tried first and confirmed to change
+  nothing at all (even in `--dry-run`) despite npm's own "fix available"
+  messaging for the qs cluster, so there's no safe partial fix available
+  here, only the two forced upgrades. Not urgent for a localhost-only dev
+  tool with no untrusted input reaching either, but worth doing deliberately
+  (with the Express route/middleware changes tested, not just installed)
+  rather than forced through blind.
 - **Record which book a bet was actually placed at**: `clv.js`'s "capture
   close" button approximates CLV using the best price *across* books,
   because a leg's snapshot never records which specific book it was placed
@@ -756,3 +912,17 @@ src/
   direction in degrees (`windDirectionDeg`) — adding a real "blowing out/in"
   verdict is a matter of comparing that to each park's orientation in
   `parks.js` and is deliberately left as a TODO rather than guessed at.
+- **One shared, validated bet-leg schema**: `EdgeFeed.jsx`, `TrendFeed.jsx`,
+  and `dailyParlay.js` each independently build the `context` blob a leg
+  needs for later grading — they agree today (the daily-parlay round of
+  fixes made sure of that), but nothing stops them drifting apart again
+  the next time one of the three changes, since there's no single source
+  of truth or validation for the shape. Worth factoring into one function
+  all three call, with real validation (missing/wrong-typed fields
+  rejected loudly at the point a leg is added, not discovered later when
+  postmortem.js can't grade it).
+- **Show calibration's uncertainty, not just a bare percentage**: a bucket
+  crossing `MIN_SAMPLE` (15) at "53% over 15 legs" and one at "53% over
+  400 legs" currently render identically once both count as "calibrated."
+  A confidence interval (even a rough one, e.g. Wilson score) alongside
+  the rate would make the difference visible instead of implied.

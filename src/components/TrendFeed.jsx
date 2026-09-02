@@ -14,12 +14,6 @@ function fmtOdds(american) {
   return american > 0 ? `+${american}` : `${american}`;
 }
 
-/** Rough implied probability from a single price — NOT devigged (no opposing side to devig against), just context. */
-function impliedProb(american) {
-  if (american == null) return null;
-  return american > 0 ? 100 / (american + 100) : -american / (-american + 100);
-}
-
 function TrendCard({ trend, sport, onAddLeg }) {
   const [odds, setOdds] = useState({ loading: false, checked: false, outcomes: [], error: null });
 
@@ -96,44 +90,65 @@ function TrendCard({ trend, sport, onAddLeg }) {
 
       {odds.outcomes.length > 0 && (
         <ul className="trend-odds-list">
-          {odds.outcomes.map((o, i) => (
-            <li key={i}>
-              <span>
-                {o.book}: {o.side} {o.point != null ? o.point : ""} {fmtOdds(o.price)}
-              </span>
-              <button
-                onClick={() =>
-                  onAddLeg({
-                    label: `${trend.player.name} ${o.side}${o.point != null ? ` ${o.point}` : ""} (${TYPE_LABEL[trend.type]})`,
-                    eventId: trend.eventId,
-                    matchup: trend.matchup,
-                    market: trend.type,
-                    selection: `${o.side}${o.point != null ? ` ${o.point}` : ""}`,
-                    americanOdds: o.price,
-                    trueProb: impliedProb(o.price),
-                    sport,
-                    commenceTime: trend.commenceTime,
-                    // Snapshot for later grading (see postmortem.js) — what the
-                    // trend actually claimed at bet time, so "what went right/wrong"
-                    // has something concrete to compare against.
-                    context: {
-                      kind: "trend",
-                      trendType: trend.type,
-                      playerId: trend.player.id,
-                      playerName: trend.player.name,
-                      streakValue: trend.streakValue,
-                      matchupLabel: trend.matchupLabel,
-                      score: trend.score,
-                      propSide: o.side,
-                      propPoint: o.point,
-                    },
-                  })
-                }
-              >
-                + Slip
-              </button>
-            </li>
-          ))}
+          {odds.outcomes.map((o, i) => {
+            // Was: trueProb = impliedProb(o.price) — that price's OWN implied
+            // probability, so expectedValue(trueProb, that same price) is
+            // exactly 0 by construction, every time (the same "fake EV"
+            // problem this app already fixed once for the daily parlay's
+            // auto-generated legs — it had just quietly resurfaced here, on
+            // the manually-added path). trends.js now attaches a real
+            // devigged probability per outcome, scoped to that exact point
+            // (see attachDevigProbs). This app's own calibration is only
+            // ever computed for the "Over" side (every trend it generates is
+            // framed as one), so it's only used here when the side actually
+            // is Over — never borrowed for an Under leg.
+            const realProb = o.side === "Over" ? (trend.calibration?.rate ?? o.trueProb) : o.trueProb;
+            const disabled = realProb == null;
+            return (
+              <li key={i}>
+                <span>
+                  {o.book}: {o.side} {o.point != null ? o.point : ""} {fmtOdds(o.price)}
+                </span>
+                <button
+                  disabled={disabled}
+                  title={
+                    disabled
+                      ? "No reliable probability for this exact line yet — no book offers both sides of it to devig against, and there's not enough calibrated history for it either. Adding it would force a meaningless 0% EV, so it's disabled instead."
+                      : undefined
+                  }
+                  onClick={() =>
+                    onAddLeg({
+                      label: `${trend.player.name} ${o.side}${o.point != null ? ` ${o.point}` : ""} (${TYPE_LABEL[trend.type]})`,
+                      eventId: trend.eventId,
+                      matchup: trend.matchup,
+                      market: trend.type,
+                      selection: `${o.side}${o.point != null ? ` ${o.point}` : ""}`,
+                      americanOdds: o.price,
+                      trueProb: realProb,
+                      sport,
+                      commenceTime: trend.commenceTime,
+                      // Snapshot for later grading (see postmortem.js) — what the
+                      // trend actually claimed at bet time, so "what went right/wrong"
+                      // has something concrete to compare against.
+                      context: {
+                        kind: "trend",
+                        trendType: trend.type,
+                        playerId: trend.player.id,
+                        playerName: trend.player.name,
+                        streakValue: trend.streakValue,
+                        matchupLabel: trend.matchupLabel,
+                        score: trend.score,
+                        propSide: o.side,
+                        propPoint: o.point,
+                      },
+                    })
+                  }
+                >
+                  + Slip
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

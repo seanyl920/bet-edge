@@ -25,8 +25,17 @@ function probDecileLabel(prob) {
   return `${d * 10}-${d * 10 + 9}%`;
 }
 
-function trendKey(sport, trendType, score) {
-  return `trend:${sport}:${trendType}:${scoreBucketLabel(score)}`;
+// Confirmed real bug: this key never included the bet's side (Over/Under) —
+// a graded "Under" leg and a graded "Over" leg on the same trend type could
+// land in the same bucket if their score happened to fall in the same band,
+// even though they're opposite predictions. 15 winning Under bets would
+// produce a 100% "hit rate" this app could then hand straight to an Over
+// pick. Every trend this app generates is framed as "Over" (see trends.js),
+// but a user can still manually add an Under from the odds list — so the
+// key has to account for it, not assume it never happens.
+function trendKey(sport, trendType, side, score) {
+  const sideKey = side ? String(side).toLowerCase() : "unknown";
+  return `trend:${sport}:${trendType}:${sideKey}:${scoreBucketLabel(score)}`;
 }
 
 function edgeKey(sport, market, prob) {
@@ -48,8 +57,8 @@ export async function getCalibration() {
       const sport = leg.sport ?? bet.sport;
       let key, label;
       if (ctx.kind === "trend") {
-        key = trendKey(sport, ctx.trendType, ctx.score);
-        label = `${String(sport).toUpperCase()} ${ctx.trendType} · score ${scoreBucketLabel(ctx.score)}`;
+        key = trendKey(sport, ctx.trendType, ctx.propSide, ctx.score);
+        label = `${String(sport).toUpperCase()} ${ctx.trendType} ${ctx.propSide ?? ""} · score ${scoreBucketLabel(ctx.score)}`;
       } else if (ctx.kind === "edge") {
         key = edgeKey(sport, leg.market, ctx.modelProb);
         label = `${String(sport).toUpperCase()} ${leg.market} · model ${probDecileLabel(ctx.modelProb)}`;
@@ -76,8 +85,8 @@ export async function getCalibration() {
 }
 
 /** Look up a calibrated rate for one trend, given an already-fetched calibration table (avoids recomputing per trend). */
-export function lookupTrendCalibration(buckets, sport, trendType, score) {
-  const key = trendKey(sport, trendType, score);
+export function lookupTrendCalibration(buckets, sport, trendType, side, score) {
+  const key = trendKey(sport, trendType, side, score);
   const bucket = buckets.find((b) => b.key === key);
   if (!bucket || !bucket.calibrated) return null;
   return { rate: bucket.hitRatePct / 100, n: bucket.n };

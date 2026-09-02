@@ -89,6 +89,18 @@ export function combineLegs(legs) {
         correlationWarnings.push(
           `"${legA.label ?? legA.market}" and "${legB.label ?? legB.market}" are the same team's moneyline and spread in one game — not independent (one implies the other), so their exact combined probability (${round(jointProb * 100, 1)}%) replaces naive multiplication for this pair.`
         );
+        // Confirmed real gap: the probability above is exact, but the
+        // PAYOUT it's priced against (combinedDecimalOdds below) is still
+        // just the individual legs' prices multiplied together — a number
+        // nobody actually quotes for this pair. A real same-game-parlay
+        // product is priced by the book specifically to account for this
+        // correlation, and it's normally worse (shorter) than the naive
+        // product for exactly that reason — this app has no access to that
+        // real combined price. correlationAdjusted.ev below is flagged as
+        // hypothetical for this reason; don't treat it as a bettable number.
+        correlationWarnings.push(
+          `The payout used above for "${legA.label ?? legA.market}" + "${legB.label ?? legB.market}" is still just those two legs' individual prices multiplied together — not a real quoted same-game-parlay price. No book actually offers this exact combined number for a correlated pair like this (a real same-game-parlay price accounts for the correlation and is normally worse than this naive product), so the correlation-adjusted EV/odds above are illustrative of direction only, not something you can actually get down on.`
+        );
       }
     }
 
@@ -124,7 +136,11 @@ export function combineLegs(legs) {
           trueProb: round(adjustedProb),
           americanOdds: decimalToAmerican(combinedDecimalOdds),
           ev: round(expectedValue(adjustedProb, combinedDecimalOdds)),
-          note: "Exact adjustment for provable same-team moneyline+spread pairs only (their real min-based joint probability, not naive multiplication). Any other same-game legs in this slip are flagged as warnings instead, since their correlation direction isn't known — see correlationWarnings.",
+          // The probability is exact (see correlationWarnings for the
+          // pairs it applies to); the payout it's priced against is not a
+          // real quoted price — see correlationWarnings for why.
+          payoutIsHypothetical: true,
+          note: "Exact probability adjustment for provable same-team moneyline+spread pairs only (their real min-based joint probability, not naive multiplication) — but priced against the naive product of individual legs' odds, which is not a real quoted same-game-parlay price (see correlationWarnings). Any other same-game legs in this slip are flagged as warnings instead, since their correlation direction isn't known.",
         }
       : null,
     combinedDecimalOdds: round(combinedDecimalOdds, 3),

@@ -19,7 +19,7 @@ import { SPORTS } from "./sports.js";
 import { getEdgeFeed } from "./edges.js";
 import { getTrendFeed, getTrendPropOdds } from "./trends.js";
 import { combineLegs } from "./parlay.js";
-import { americanToDecimal, devigMultiplicative } from "./oddsMath.js";
+import { americanToDecimal } from "./oddsMath.js";
 import { localDateKey } from "./dateUtil.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -128,6 +128,11 @@ async function edgeCandidates() {
           label: `${e.team}${e.line != null ? ` ${e.line > 0 ? "+" : ""}${e.line}` : ""} (${e.market})`,
           eventId: e.eventId,
           matchup: e.matchup,
+          // Was missing entirely — postmortem.js's gradeEdgeLeg() needs
+          // this to know which date to query ESPN for the final score, so
+          // a leg without it could never be graded even with a real
+          // eventId. Confirmed real gap alongside the missing `context`.
+          commenceTime: e.commenceTime,
           market: e.market,
           selection: `${e.team}${e.line != null ? ` ${e.line}` : ""}`,
           americanOdds: e.americanOdds,
@@ -142,6 +147,21 @@ async function edgeCandidates() {
             e.marketProb != null
               ? `Elo (${e.sampleSize}-game sample) has ${e.team} at ${pctStr(e.modelProb)}, market consensus ${pctStr(e.marketProb)} — blended to ${pctStr(e.blendedProb)}.`
               : `Elo (${e.sampleSize}-game sample) has ${e.team} at ${pctStr(e.modelProb)}; no market consensus available to blend against.`,
+          // Same shape EdgeFeed.jsx attaches when a user manually adds this
+          // exact kind of leg — confirmed real gap: a daily-parlay leg used
+          // to reach the slip with none of this, so "Add all to slip" +
+          // grading it later had nothing to grade against (postmortem.js
+          // needs ctx.side to know which way the leg was betting).
+          context: {
+            kind: "edge",
+            side: e.side,
+            team: e.team,
+            line: e.line ?? null,
+            modelProb: e.blendedProb,
+            rawEloProb: e.modelProb,
+            marketProb: e.marketProb,
+            sampleSize: e.sampleSize,
+          },
         });
       }
     } catch (err) {
@@ -150,28 +170,6 @@ async function edgeCandidates() {
     }
   }
   return out;
-}
-
-/**
- * Devigged Over/Under probability for a prop, paired per book (same book's
- * Over and Under, same point) and averaged. Returns null if no book offered
- * both sides at a matching point.
- */
-function devigOverUnder(outcomes) {
-  const byBook = new Map();
-  for (const o of outcomes) {
-    if (o.side !== "Over" && o.side !== "Under") continue;
-    const entry = byBook.get(o.book) ?? {};
-    entry[o.side] = o;
-    byBook.set(o.book, entry);
-  }
-  const probs = [];
-  for (const { Over, Under } of byBook.values()) {
-    if (!Over || !Under || Over.point !== Under.point) continue;
-    const [pOver] = devigMultiplicative([americanToDecimal(Over.price), americanToDecimal(Under.price)]);
-    if (pOver != null) probs.push(pOver);
-  }
-  return probs.length ? probs.reduce((s, p) => s + p, 0) / probs.length : null;
 }
 
 /** Top MLB trend candidates, each checked against real prop odds — bounded, see MAX_TREND_ODDS_CHECKS. */
@@ -199,13 +197,19 @@ async function trendCandidates() {
       // trueProb priority: (1) this app's own calibrated hit rate for this
       // trend's bucket, when one exists — a real empirical rate from graded
       // outcomes, not a market number at all, and literally this app's
-      // whole thesis; (2) a properly devigged Over/Under pair from the same
-      // book; (3) if neither is available, skip this leg rather than fake a
-      // probability from the single vigged price it's also priced at —
+      // whole thesis; (2) the devigged probability trends.js already
+      // attached to `best` itself (getTrendPropOdds()'s attachDevigProbs —
+      // scoped to `best`'s own point specifically, never averaged across
+      // other points, which was a confirmed real bug: picking the
+      // highest-paying Over across every point but pricing it against a
+      // probability averaged across every point too, e.g. an Over 1.5 leg
+      // getting a probability that was really half Over-0.5-market); (3) if
+      // neither is available, skip this leg rather than fake a probability
+      // from the single vigged price it's also priced at —
       // expectedValue(1/decimalOdds, decimalOdds) is always exactly 0 by
       // construction, which is why every past daily parlay's reported EV
       // came back at 0.0% regardless of the actual legs chosen.
-      const trueProb = t.calibration?.rate ?? devigOverUnder(outcomes);
+      const trueProb = t.calibration?.rate ?? best.trueProb;
       if (trueProb == null) continue;
 
       out.push({
@@ -214,6 +218,9 @@ async function trendCandidates() {
         label: `${t.player.name} Over ${best.point} (${t.type})`,
         eventId: t.eventId,
         matchup: t.matchup,
+        // Was missing entirely — see the matching comment on the edge-leg
+        // push above.
+        commenceTime: t.commenceTime,
         market: t.type,
         selection: `Over ${best.point}`,
         americanOdds: best.price,
@@ -224,6 +231,20 @@ async function trendCandidates() {
           t.calibration?.rate != null
             ? `${t.headline} — this app has graded ${t.calibration.n} similar legs at a real ${pctStr(t.calibration.rate)} hit rate.`
             : `${t.headline}${t.matchupLabel && t.matchupLabel !== "unknown" ? ` — ${t.matchupLabel}` : ""} (priced off the devigged prop line, not this app's own model — not enough graded history yet for this bucket).`,
+        // Same shape TrendFeed.jsx attaches when a user manually adds this
+        // exact kind of leg — see the matching comment on the edge-leg push
+        // above for why this matters for grading.
+        context: {
+          kind: "trend",
+          trendType: t.type,
+          playerId: t.player.id,
+          playerName: t.player.name,
+          streakValue: t.streakValue,
+          matchupLabel: t.matchupLabel,
+          score: t.score,
+          propSide: best.side,
+          propPoint: best.point,
+        },
       });
     } catch (err) {
       warn("trendCandidates", `${t.player?.name ?? t.eventId}: threw — ${err.message}`);
@@ -320,12 +341,32 @@ async function build() {
 }
 
 /** Today's parlay — builds once per calendar day, then reads from disk. */
+// Confirmed real gap: two concurrent calls (e.g. two tabs both loading this
+// tab at once, or a click racing the initial page load) could both decide
+// nothing cached-for-today exists yet and both call build() — wasted work
+// always, and wasted Odds API prop-lookup credits specifically (the one
+// place in this app that spends them without an explicit user click).
+// Serialize generation the same way betlog.js serializes writes: every
+// call queues behind the previous one, so only one build() is ever
+// actually in flight.
+let generateQueue = Promise.resolve();
+function serialize(fn) {
+  const result = generateQueue.then(fn, fn);
+  generateQueue = result.then(
+    () => {},
+    () => {}
+  );
+  return result;
+}
+
 export async function getDailyParlay({ forceRegenerate = false } = {}) {
-  if (!forceRegenerate) {
-    const existing = await readStore();
-    if (existing?.date === todayKey()) return existing;
-  }
-  const fresh = await build();
-  await writeStore(fresh);
-  return fresh;
+  return serialize(async () => {
+    if (!forceRegenerate) {
+      const existing = await readStore();
+      if (existing?.date === todayKey()) return existing;
+    }
+    const fresh = await build();
+    await writeStore(fresh);
+    return fresh;
+  });
 }

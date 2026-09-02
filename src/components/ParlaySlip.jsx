@@ -109,6 +109,11 @@ export default function ParlaySlip({ legs, onRemove, onClear, onLogged }) {
               <span>
                 {pct(combined.correlationAdjusted.trueProb)} ·{" "}
                 {(combined.correlationAdjusted.ev * 100).toFixed(1)}% EV
+                {combined.correlationAdjusted.payoutIsHypothetical && (
+                  <div className="muted small">
+                    priced against the naive product of individual legs — not a real quoted same-game price, see below
+                  </div>
+                )}
               </span>
             </div>
           )}
