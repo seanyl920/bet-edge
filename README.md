@@ -65,6 +65,38 @@ is even more explicitly "here's a lead," not "here's a probability."
   below before trusting this one — it's a recreational construct, not a
   value bet, and the app says so on the page itself, not just here.
 
+## Known-issue history
+
+This app's honesty is only as good as what's actually been checked, so when
+something turns out to be wrong, it goes here — not just fixed silently.
+
+- **The daily parlay's reported EV was meaningless for every trend leg, for
+  as long as this feature existed.** `dailyParlay.js` set a trend leg's
+  probability to `1 / decimalOdds` — the odds' own vigged implied
+  probability — then fed that into the same EV formula the app uses
+  everywhere else to mean "how good is this bet." `expectedValue(1/d, d)` is
+  *always exactly 0*, by construction, regardless of the actual legs chosen —
+  which is why every daily parlay ever generated reported precisely "0.0%
+  EV." It looked like a real (if unexciting) number; it was actually
+  guaranteed to be zero no matter what. Fixed: a trend leg's probability now
+  comes from this app's own calibrated hit rate for that bucket when one
+  exists (real empirical data, not a market number at all), or a properly
+  devigged Over/Under pair when it doesn't — and a leg is dropped from the
+  daily parlay entirely rather than falling back to the vigged number that
+  caused this. Caught by an external code review that read the source
+  directly rather than trusting this README, which is exactly the kind of
+  check this project depends on.
+- **The daily parlay rolled over at 7-8pm US Eastern, not midnight.** Its
+  "once per day" boundary used `new Date().toISOString().slice(0,10)` — UTC
+  midnight — which lands in the middle of a real evening MLB slate for a US
+  user. Fixed to use the local calendar day (hardcoded to America/New_York;
+  see `dailyParlay.js`).
+- **The devigged market consensus included the exact book being bet into**,
+  a mild circularity that shrunk the apparent edge inconsistently. Switched
+  from mean to median across books (`edges.js`), which blunts most of one
+  book's pull on its own; full exclusion of the bet's own book was judged
+  not worth the added complexity for the remaining benefit.
+
 ## Daily longshot parlay
 
 Once a day (the first time you load the tab after the calendar date rolls
@@ -151,7 +183,25 @@ can see how close a signal is to having enough data behind it.
   threshold entirely (see `MIN_SAMPLE_SIZE` in `server/edges.js`).
 - **Devigging is an approximation.** It removes the vig by simple
   proportional scaling, not the more accurate Shin method — good enough to
-  flag mispricing, not a precision instrument.
+  flag mispricing, not a precision instrument. (Still true, and still the
+  lowest-priority known gap — everything else in this list once had the same
+  status until it got fixed; see [Known-issue history](#known-issue-history).)
+- **The edge feed blends Elo toward the market, but never fully trusts
+  either.** `edges.js`'s EV/Kelly are computed off a probability shrunk
+  toward the devigged market consensus (weight scaling with sample size, capped
+  at 50% model trust even at a full season — see `blendWithMarket`), not raw
+  Elo. Raw Elo is still shown alongside it in the Edge feed table, labeled as
+  such, so you can see when the two disagree a lot — that disagreement is
+  usually the model being wrong, not the market missing something.
+- **Elo carries over between seasons, but the carryover math was never run
+  against a live response.** `eloBootstrap.js` seeds each team from
+  `0.75 × last-season-final + 0.25 × 1500` rather than a flat 1500 — the
+  standard fix for "early-season ratings are noise" — but the `?season=YYYY`
+  parameter it depends on was never confirmed live, and "last season" is a
+  naive `currentYear - 1` that's likely wrong for NBA/NFL's cross-calendar-year
+  seasons. It fails closed (flat 1500, this app's original behavior) rather
+  than silently producing bad ratings if the fetch comes back empty — confirm
+  it live before trusting April/May edges next season.
 - **Correlation adjustment in the parlay builder is a heuristic haircut**,
   not a fitted correlation model. It exists so same-game parlays are never
   silently overstated — always look at both the naive and adjusted numbers.

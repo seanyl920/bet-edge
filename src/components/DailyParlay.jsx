@@ -9,6 +9,12 @@ function pct(x) {
   return x == null ? "—" : `${(x * 100).toFixed(2)}%`;
 }
 
+const PROB_SOURCE_LABEL = {
+  "elo-blended": "Elo (blended w/ market)",
+  calibration: "your graded history",
+  devig: "devigged prop line",
+};
+
 export default function DailyParlay({ onAddLeg }) {
   const [state, setState] = useState({ loading: true, error: null, data: null });
   const [regenerating, setRegenerating] = useState(false);
@@ -109,7 +115,7 @@ export default function DailyParlay({ onAddLeg }) {
                 <th>Matchup</th>
                 <th>Pick</th>
                 <th>Odds</th>
-                <th>Implied</th>
+                <th>Est. prob</th>
               </tr>
             </thead>
             <tbody>
@@ -127,7 +133,10 @@ export default function DailyParlay({ onAddLeg }) {
                     {leg.source === "trend" && <div className="muted small">player prop, not a team total</div>}
                   </td>
                   <td>{fmtOdds(leg.americanOdds)}</td>
-                  <td>{pct(leg.trueProb)}</td>
+                  <td>
+                    {pct(leg.trueProb)}
+                    <div className="muted small">{PROB_SOURCE_LABEL[leg.probSource] ?? leg.probSource}</div>
+                  </td>
                 </tr>
               ))}
             </tbody>

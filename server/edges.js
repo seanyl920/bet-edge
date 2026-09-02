@@ -18,12 +18,30 @@ import {
   devigMultiplicative,
   expectedValue,
   kellyStake,
+  median,
   round,
 } from "./oddsMath.js";
 
 // Below this many completed games for BOTH teams, Elo is mostly still at (or
 // near) its 1500 starting point and isn't worth trusting for real edges.
 const MIN_SAMPLE_SIZE = 3;
+
+// How much to trust the Elo model over the market's own devigged price when
+// computing EV/Kelly. Raw Elo vs market (weight 1.0) means a weak Elo
+// estimate that's just wrong reads as a fat "edge" indistinguishable from a
+// real one, and Kelly then overstakes it. Trust scales up with sample size
+// (an Elo built on 3 games deserves far less weight than one built on 100)
+// but is capped well under 1.0 even at a full season — this app's entire
+// premise is that markets are largely efficient (see README), so nothing
+// here should ever fully override the market's own price.
+const ELO_TRUST_FULL_SAMPLE = 20; // games at which Elo gets its maximum trust weight
+const ELO_TRUST_MAX_WEIGHT = 0.5;
+
+function blendWithMarket(modelProb, marketProb, sampleSize) {
+  if (marketProb == null) return modelProb; // nothing to blend toward
+  const w = Math.min(sampleSize / ELO_TRUST_FULL_SAMPLE, 1) * ELO_TRUST_MAX_WEIGHT;
+  return w * modelProb + (1 - w) * marketProb;
+}
 
 function h2hPrices(oddsEvent) {
   const home = [];
@@ -83,8 +101,6 @@ function consensusAndBest(homePrices, awayPrices) {
       awayProbs.push(pAway);
     }
   }
-  const avg = (arr) => (arr.length ? arr.reduce((s, x) => s + x, 0) / arr.length : null);
-
   const bestOf = (prices) =>
     prices.reduce((best, p) => {
       const decimal = americanToDecimal(p.price);
@@ -94,7 +110,13 @@ function consensusAndBest(homePrices, awayPrices) {
     }, null);
 
   return {
-    consensus: { home: avg(homeProbs), away: avg(awayProbs) },
+    // Median, not mean — one stale or outlier book shouldn't drag "fair"
+    // toward itself. This still includes the book you might end up betting
+    // into (excluding it conditionally per side would need this function to
+    // know which side you're pricing, which complicates the shared
+    // home/away computation here for limited benefit — median already
+    // blunts most of a single book's pull on its own).
+    consensus: { home: median(homeProbs), away: median(awayProbs) },
     bestHome: bestOf(homePrices),
     bestAway: bestOf(awayPrices),
     numBooks: byBook.size,
@@ -102,7 +124,11 @@ function consensusAndBest(homePrices, awayPrices) {
 }
 
 function makeEdge({ event, sport, market, side, team, line, best, modelProb, marketProb, sampleSize }) {
-  const ev = expectedValue(modelProb, best.decimal);
+  // EV/Kelly are computed off the blended probability, not raw Elo — see
+  // blendWithMarket above. modelProb is still reported as-is (the pure Elo
+  // number) so it's visible what the model actually said before shrinkage.
+  const blendedProb = blendWithMarket(modelProb, marketProb, sampleSize);
+  const ev = expectedValue(blendedProb, best.decimal);
   return {
     sport: sport.key,
     eventId: event.id,
@@ -116,10 +142,11 @@ function makeEdge({ event, sport, market, side, team, line, best, modelProb, mar
     americanOdds: best.american,
     decimalOdds: round(best.decimal, 3),
     modelProb: round(modelProb),
+    blendedProb: round(blendedProb),
     marketProb: marketProb != null ? round(marketProb) : null,
     ev: round(ev),
     evPct: round(ev * 100, 2),
-    kellyStakePct: round(kellyStake(modelProb, best.decimal, 0.25) * 100, 2),
+    kellyStakePct: round(kellyStake(blendedProb, best.decimal, 0.25) * 100, 2),
     sampleSize,
   };
 }

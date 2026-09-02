@@ -83,21 +83,12 @@ export function normalCdf(x) {
   return p;
 }
 
-/**
- * Combine independent-outcome probabilities/prices into a parlay.
- * Naive math — assumes every leg is statistically independent, which is
- * wrong for same-game legs. See parlay.js for the correlation adjustment
- * layered on top of this.
- */
-export function combineParlay(legs) {
-  const prob = legs.reduce((acc, l) => acc * l.trueProb, 1);
-  const decimalOdds = legs.reduce((acc, l) => acc * l.decimalOdds, 1);
-  return {
-    trueProb: prob,
-    decimalOdds,
-    americanOdds: decimalToAmerican(decimalOdds),
-    ev: expectedValue(prob, decimalOdds),
-  };
+/** Middle value of a numeric array — more robust than a mean against one stale/outlier book. */
+export function median(values) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 export function round(n, digits = 4) {

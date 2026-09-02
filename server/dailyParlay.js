@@ -19,7 +19,7 @@ import { SPORTS } from "./sports.js";
 import { getEdgeFeed } from "./edges.js";
 import { getTrendFeed, getTrendPropOdds } from "./trends.js";
 import { combineLegs } from "./parlay.js";
-import { americanToDecimal, decimalToImpliedProb } from "./oddsMath.js";
+import { americanToDecimal, devigMultiplicative } from "./oddsMath.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, "..", "data");
@@ -42,8 +42,20 @@ const MIN_LEG_PROB = 0.5;
 // checking every trend candidate.
 const MAX_TREND_ODDS_CHECKS = 8;
 
+// Local calendar day, not UTC. UTC midnight is 7-8pm US Eastern (depending
+// on DST) — right in the middle of a real MLB evening slate, which was
+// rolling the "once per day" parlay over mid-betting-session. Hardcoded to
+// America/New_York since that's this app's actual usage; change the zone if
+// you're betting from somewhere else.
+const DAILY_PARLAY_TIMEZONE = "America/New_York";
+
 function todayKey() {
-  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD, UTC — fine for "which calendar day is this"
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: DAILY_PARLAY_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date()); // en-CA formats as YYYY-MM-DD
 }
 
 async function readStore() {
@@ -77,7 +89,12 @@ async function edgeCandidates() {
           market: e.market,
           selection: `${e.team}${e.line != null ? ` ${e.line}` : ""}`,
           americanOdds: e.americanOdds,
-          trueProb: e.modelProb,
+          // blendedProb (Elo shrunk toward market), not raw modelProb — see
+          // edges.js's blendWithMarket. Same reasoning as trend legs below:
+          // don't feed a probability into this app's own EV math that the
+          // app itself doesn't otherwise trust at face value.
+          trueProb: e.blendedProb,
+          probSource: "elo-blended",
           decimalOdds: americanToDecimal(e.americanOdds),
         });
       }
@@ -86,6 +103,28 @@ async function edgeCandidates() {
     }
   }
   return out;
+}
+
+/**
+ * Devigged Over/Under probability for a prop, paired per book (same book's
+ * Over and Under, same point) and averaged. Returns null if no book offered
+ * both sides at a matching point.
+ */
+function devigOverUnder(outcomes) {
+  const byBook = new Map();
+  for (const o of outcomes) {
+    if (o.side !== "Over" && o.side !== "Under") continue;
+    const entry = byBook.get(o.book) ?? {};
+    entry[o.side] = o;
+    byBook.set(o.book, entry);
+  }
+  const probs = [];
+  for (const { Over, Under } of byBook.values()) {
+    if (!Over || !Under || Over.point !== Under.point) continue;
+    const [pOver] = devigMultiplicative([americanToDecimal(Over.price), americanToDecimal(Under.price)]);
+    if (pOver != null) probs.push(pOver);
+  }
+  return probs.length ? probs.reduce((s, p) => s + p, 0) / probs.length : null;
 }
 
 /** Top MLB trend candidates, each checked against real prop odds — bounded, see MAX_TREND_ODDS_CHECKS. */
@@ -108,6 +147,19 @@ async function trendCandidates() {
       const overs = outcomes.filter((o) => o.side === "Over");
       if (overs.length === 0) continue;
       const best = overs.reduce((b, o) => (!b || americanToDecimal(o.price) > americanToDecimal(b.price) ? o : b), null);
+
+      // trueProb priority: (1) this app's own calibrated hit rate for this
+      // trend's bucket, when one exists — a real empirical rate from graded
+      // outcomes, not a market number at all, and literally this app's
+      // whole thesis; (2) a properly devigged Over/Under pair from the same
+      // book; (3) if neither is available, skip this leg rather than fake a
+      // probability from the single vigged price it's also priced at —
+      // expectedValue(1/decimalOdds, decimalOdds) is always exactly 0 by
+      // construction, which is why every past daily parlay's reported EV
+      // came back at 0.0% regardless of the actual legs chosen.
+      const trueProb = t.calibration?.rate ?? devigOverUnder(outcomes);
+      if (trueProb == null) continue;
+
       out.push({
         source: "trend",
         sport: "mlb",
@@ -117,7 +169,8 @@ async function trendCandidates() {
         market: t.type,
         selection: `Over ${best.point}`,
         americanOdds: best.price,
-        trueProb: decimalToImpliedProb(americanToDecimal(best.price)),
+        trueProb,
+        probSource: t.calibration?.rate != null ? "calibration" : "devig",
         decimalOdds: americanToDecimal(best.price),
       });
     } catch {

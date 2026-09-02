@@ -52,6 +52,29 @@ function formatAvg(avg) {
   return avg == null ? "—" : avg.toFixed(3).replace(/^0/, "");
 }
 
+function normalizeName(s) {
+  return String(s || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // strip accents (e.g. a name with a combining tilde)
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, "")
+    .trim();
+}
+
+/**
+ * Whole-word name match, not a raw substring check — a plain
+ * `a.includes(b)` would false-match a short name against an unrelated
+ * player whose description happens to contain it as a fragment. Requires
+ * every word of the shorter name to appear as a complete word in the other.
+ */
+function namesMatch(a, b) {
+  const wordsA = normalizeName(a).split(/\s+/).filter(Boolean);
+  const wordsB = normalizeName(b).split(/\s+/).filter(Boolean);
+  if (!wordsA.length || !wordsB.length) return false;
+  const [shorter, longer] = wordsA.length <= wordsB.length ? [wordsA, wordsB] : [wordsB, wordsA];
+  return shorter.every((w) => longer.includes(w));
+}
+
 function vsTeamContext(split, oppTeamName) {
   if (split.AB < VS_TEAM_MIN_AB || split.avg == null) return { bonus: 0, note: null };
   if (split.avg >= VS_TEAM_VERY_HOT_AVG) {
@@ -338,14 +361,13 @@ export async function getTrendPropOdds(sport, espnEventId, playerName, trendType
   if (!oddsEvent) return { available: false, outcomes: [] };
 
   const { event: propEvent } = await getPlayerProps(sport, oddsEvent.id, marketKey);
-  const nameLower = playerName.toLowerCase();
   const outcomes = [];
   for (const bm of propEvent?.bookmakers ?? []) {
     const market = bm.markets?.find((m) => m.key === marketKey);
     if (!market) continue;
     for (const o of market.outcomes ?? []) {
-      const desc = (o.description ?? o.name ?? "").toLowerCase();
-      if (desc.includes(nameLower) || nameLower.includes(desc)) {
+      const desc = o.description ?? o.name ?? "";
+      if (namesMatch(playerName, desc)) {
         outcomes.push({ book: bm.title, side: o.name, point: o.point ?? null, price: o.price });
       }
     }

@@ -106,7 +106,10 @@ export default function EdgeFeed({ sport, onAddLeg, onSelectGame }) {
                 <td>
                   {fmtOdds(e.americanOdds)} <span className="muted small">({e.book})</span>
                 </td>
-                <td>{pct(e.modelProb)}</td>
+                <td>
+                  {pct(e.blendedProb)}
+                  <div className="muted small">Elo: {pct(e.modelProb)}</div>
+                </td>
                 <td>{pct(e.marketProb)}</td>
                 <td className="ev-cell">+{e.evPct}%</td>
                 <td>{e.kellyStakePct}%</td>
@@ -121,7 +124,10 @@ export default function EdgeFeed({ sport, onAddLeg, onSelectGame }) {
                         market: e.market,
                         selection: `${e.team}${e.line != null ? ` ${e.line}` : ""}`,
                         americanOdds: e.americanOdds,
-                        trueProb: e.modelProb,
+                        // The blended (Elo shrunk toward market) probability —
+                        // the number that actually produced the EV/Kelly shown —
+                        // not the raw Elo estimate. See edges.js's blendWithMarket.
+                        trueProb: e.blendedProb,
                         sport,
                         commenceTime: e.commenceTime,
                         // Snapshot for later grading (see postmortem.js) — what the
@@ -131,7 +137,8 @@ export default function EdgeFeed({ sport, onAddLeg, onSelectGame }) {
                           side: e.side,
                           team: e.team,
                           line: e.line ?? null,
-                          modelProb: e.modelProb,
+                          modelProb: e.blendedProb,
+                          rawEloProb: e.modelProb,
                           marketProb: e.marketProb,
                           sampleSize: e.sampleSize,
                         },

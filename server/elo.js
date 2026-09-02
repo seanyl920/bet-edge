@@ -10,7 +10,7 @@
 
 import { normalCdf } from "./oddsMath.js";
 
-const BASE_RATING = 1500;
+export const BASE_RATING = 1500;
 
 export function eloDiffToWinProb(eloDiff) {
   return 1 / (1 + 10 ** (-eloDiff / 400));
