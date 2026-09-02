@@ -82,6 +82,20 @@ export async function getTeamInjuries(sport, teamId) {
   });
 }
 
+// Confirmed live (Sept 2026): a competitor's `score` on this endpoint is an
+// object — `{ value: 4, displayValue: "4" }` — not a bare number. The old
+// `Number(home.score)` coerced that whole object (via its default
+// toString(), "[object Object]") to NaN every single time, for every
+// completed game, on every sport — this is the root cause the Elo
+// NaN-contamination fix (see elo.js) actually traced back to: no completed
+// game was ever being correctly folded into a rating. Handles a bare
+// number too, just in case the shape ever differs by endpoint or context.
+function extractScore(raw) {
+  if (raw == null) return null;
+  const n = Number(typeof raw === "object" ? raw.value : raw);
+  return Number.isFinite(n) ? n : null;
+}
+
 function normalizeEvent(ev) {
   const comp = ev?.competitions?.[0];
   if (!comp) return null;
@@ -108,13 +122,13 @@ function normalizeEvent(ev) {
       teamId: String(home.team?.id),
       name: home.team?.displayName,
       abbreviation: home.team?.abbreviation,
-      score: home.score != null ? Number(home.score) : null,
+      score: extractScore(home.score),
     },
     away: {
       teamId: String(away.team?.id),
       name: away.team?.displayName,
       abbreviation: away.team?.abbreviation,
-      score: away.score != null ? Number(away.score) : null,
+      score: extractScore(away.score),
     },
   };
 }

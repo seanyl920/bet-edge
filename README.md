@@ -339,6 +339,33 @@ from the start.
   missing score into a real 0-0 game instead of rejecting it; fixed to
   treat `null`/`undefined` as invalid before coercion.
 
+- **The actual root cause, one level further down: `getTeamSchedule()` and
+  `getScoreboard()` share one event parser (`normalizeEvent()` in
+  `espn.js`), and it had been reading a completed game's score wrong from
+  the start.** The NaN-contamination guards above did their job and
+  immediately turned up something bigger: with bad scores now rejected
+  instead of silently corrupting ratings, *every single completed game* —
+  hundreds of them, across NFL and MLB both — was being rejected. A live
+  diagnostic on the raw ESPN response confirmed why: a competitor's score
+  on this endpoint is an object, `{ value: 4, displayValue: "4" }`, not a
+  bare number. The old code did `Number(home.score)` directly — coercing
+  that whole object (via its default `toString()`, `"[object Object]"`) to
+  `NaN` every single time, for every completed game, on every sport, since
+  this line was written. Because `normalizeEvent()` is the one shared
+  parser behind both endpoints, this wasn't just an Elo bug: `postmortem.js`
+  computes `event.home.score - event.away.score` to grade edge-feed legs
+  from the same field, so moneyline/spread bet grading was silently
+  affected too (an always-`NaN` margin). Fixed: `extractScore()` now reads
+  `.value` off the object shape (falling back to treating the input as a
+  bare number, in case some other endpoint or context differs). Verified
+  against the exact confirmed live shape plus null/malformed/bare-number
+  cases. This is what the NaN-contamination fix above was actually
+  investigating when it surfaced this — the guards stay in place regardless
+  (defense in depth: they'd still catch a similarly-shaped bug in a
+  different field tomorrow), but this is the fix that makes real Elo
+  ratings, real edges, and real postmortem grading start happening again
+  instead of merely stopping the bleeding.
+
 ## Daily longshot parlay
 
 Once a day (the first time you load the tab after the calendar date rolls
