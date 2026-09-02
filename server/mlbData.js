@@ -35,11 +35,18 @@ async function getJson(url) {
   }
 }
 
+// Shared by getProbablePitchers and getConfirmedLineup — both read
+// different parts of the same `summary?event=` response, so this fetches
+// and caches it once instead of hitting ESPN twice for the same game.
+function getEventSummary(espnEventId) {
+  return cached(`mlb:summary:${espnEventId}`, 15 * 60 * 1000, () => getJson(`${SITE_BASE}/summary?event=${espnEventId}`));
+}
+
 /** Probable starting pitchers for a game, keyed by home/away. Either side may be null ("TBD"). */
 export async function getProbablePitchers(espnEventId) {
   return cached(`mlb:probables:${espnEventId}`, 15 * 60 * 1000, async () => {
     try {
-      const data = await getJson(`${SITE_BASE}/summary?event=${espnEventId}`);
+      const data = await getEventSummary(espnEventId);
 
       // Was: read the starter out of the pregame boxscore's "pitching" stat
       // category (`starter: true` flag), cross-referenced against
@@ -117,6 +124,74 @@ export async function getTeamBatters(teamId) {
       return [];
     }
   });
+}
+
+/**
+ * The CONFIRMED starting lineup for a game, keyed by home/away — never the
+ * full roster. Confirmed live against two games a few hours apart (Sept
+ * 2026): `summary?event=`'s `boxscore.players[team].statistics[]` carries a
+ * batting category whose `athletes[]` array is populated with real
+ * `{starter: true, batOrder: 1-9}` entries once the lineup posts, and is an
+ * EMPTY array — never a partial or placeholder one — for a game whose
+ * lineup hasn't posted yet. That emptiness is the confirmation signal:
+ * `confirmed: false` with `batters: []` means exactly "not posted yet,"
+ * never "this team has no batters." Callers must never fall back to
+ * getTeamBatters()'s full roster and treat it as if it were this — that's
+ * exactly the "confirmed vs. projected" conflation this function exists to
+ * prevent. There is no explicit "official" flag in ESPN's response (no key
+ * scan for one turned up anything); array-populated-or-not is the only
+ * signal available, so that's what this relies on.
+ */
+export async function getConfirmedLineup(espnEventId) {
+  try {
+    const data = await getEventSummary(espnEventId);
+
+    // boxscore.players[] entries don't carry `homeAway` directly, only a
+    // team id — cross-reference against header.competitions[0].competitors,
+    // the same reliable home/away source getProbablePitchers uses.
+    const competitors = data?.header?.competitions?.[0]?.competitors ?? [];
+    const teamIdToHomeAway = new Map();
+    for (const c of competitors) {
+      if ((c?.homeAway === "home" || c?.homeAway === "away") && c?.team?.id != null) {
+        teamIdToHomeAway.set(String(c.team.id), c.homeAway);
+      }
+    }
+
+    const result = { home: { confirmed: false, batters: [] }, away: { confirmed: false, batters: [] } };
+    const boxPlayers = data?.boxscore?.players ?? [];
+    for (const teamEntry of boxPlayers) {
+      const ha = teamIdToHomeAway.get(String(teamEntry?.team?.id));
+      if (ha !== "home" && ha !== "away") continue;
+
+      // Don't assume the batting category is always statistics[0] — find it
+      // by content (any athlete with a real 1-9 batOrder) instead, the same
+      // defensive approach parseGameLog uses for gamelog categories, which
+      // this app has already been burned by assuming a stable index for
+      // once before (see README's Known-issue history).
+      const battingCategory =
+        (teamEntry?.statistics ?? []).find((s) => (s?.athletes ?? []).some((a) => a?.batOrder >= 1)) ?? teamEntry?.statistics?.[0];
+      const athletes = battingCategory?.athletes ?? [];
+      const starters = athletes
+        .filter((a) => a?.starter === true && Number.isFinite(a?.batOrder) && a.batOrder >= 1 && a.batOrder <= 9)
+        .map((a) => ({
+          id: String(a.athlete?.id),
+          name: a.athlete?.displayName ?? a.athlete?.fullName ?? a.athlete?.shortName ?? "Unknown",
+          battingOrder: a.batOrder,
+          position: a.athlete?.position?.abbreviation ?? a.position?.abbreviation ?? null,
+        }))
+        .sort((x, y) => x.battingOrder - y.battingOrder);
+
+      result[ha] = { confirmed: starters.length > 0, batters: starters };
+    }
+
+    if (!result.home.confirmed && !result.away.confirmed) {
+      warn("getConfirmedLineup", `event ${espnEventId}: no confirmed lineup for either team yet (normal well before first pitch).`);
+    }
+    return result;
+  } catch (err) {
+    warn("getConfirmedLineup", `event ${espnEventId}: request failed — ${err.message}`);
+    return { home: { confirmed: false, batters: [] }, away: { confirmed: false, batters: [] } };
+  }
 }
 
 function parseGameLog(data, statAliases, debugLabel, presenceAliases) {

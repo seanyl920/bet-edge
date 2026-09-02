@@ -48,6 +48,22 @@ function TrendCard({ trend, sport, onAddLeg }) {
             score {trend.score}
           </span>
         )}
+        {trend.lineupStatus === "confirmed" && (
+          <span
+            className="badge badge-ok"
+            title="ESPN has posted today's real starting lineup, and this player is in it."
+          >
+            starting{trend.player.battingOrder ? `, batting ${trend.player.battingOrder}` : ""}
+          </span>
+        )}
+        {trend.lineupStatus === "projected" && (
+          <span
+            className="badge badge-mid"
+            title="Today's lineup hasn't posted yet — this is from the full roster, not a confirmed starter. Score is reduced to reflect that."
+          >
+            lineup not confirmed yet
+          </span>
+        )}
       </div>
       <h3>{trend.headline}</h3>
       <div className="muted small">

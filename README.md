@@ -809,11 +809,31 @@ enough to mean something, and even then only against the specific
   not a fitted correlation model. It exists so same-game parlays are never
   silently overstated — always look at both the naive and adjusted numbers.
 - **The trend feed's "score" is a stacked-factor count, not a probability.**
-  It adds up streak length and a matchup-quality bucket (opposing pitcher's
-  ERA, or the opposing lineup's batting average) — there's no market price or
-  fitted model behind it the way the edge feed has. Treat every trend as a
+  It adds up streak length, a matchup-quality bucket (opposing pitcher's
+  ERA, or the opposing lineup's batting average), and now a lineup-
+  confirmation penalty (see below) — there's no market price or fitted
+  model behind it the way the edge feed has. Treat every trend as a
   research lead: read the actual streak, actual ERA/AVG, and actual weather
   before betting it, not just the score number.
+- **Batter trends use the CONFIRMED starting lineup when one has posted —
+  never the full roster passed off as if it were the lineup.** Confirmed
+  live (Sept 2026, two real games checked a few hours apart at the same
+  moment): ESPN's `summary?event=` endpoint carries `starter`/`batOrder`
+  fields on each boxscore athlete once a lineup is posted, and returns a
+  genuinely empty athletes array — never a partial or placeholder one —
+  before that (see `getConfirmedLineup()` in `server/mlbData.js`). Every
+  trend now carries `lineupStatus` (`"confirmed"` — a real, posted
+  starting-lineup slot, with the actual batting-order number — or
+  `"projected"` — no lineup posted yet, this is just "someone on the
+  roster") and the Trends tab shows it as a badge on every card. A
+  projected-lineup trend gets a flat score penalty rather than ranking
+  even with a confirmed one — reduced confidence, not a fabricated
+  number, and never hidden. There's no explicit "this lineup is official"
+  flag in ESPN's response (checked, doesn't exist) — confirmed status is
+  inferred from whether the array is populated at all, which is the only
+  signal available. Pitch counts, batters-faced, and days-rest were also
+  checked for in the same response and aren't there; workload beyond
+  lineup confirmation isn't built yet (see Extending it).
 - **The trend feed does not claim to know which way the wind blows relative
   to any specific park.** MLB's official rule of thumb is that a park's
   home-plate-to-outfield line should run east-northeast, but real parks
@@ -954,7 +974,7 @@ server/
   eloBootstrap.js    Replays this season's completed games to build live ratings
   oddsMath.js         American/decimal odds, devig, EV, Kelly stake
   espn.js               ESPN client: teams, scoreboard, schedules, injuries
-  mlbData.js             MLB-specific ESPN calls: probables, rosters, gamelogs, pitcher/team stats
+  mlbData.js             MLB-specific ESPN calls: probables, CONFIRMED starting lineups, rosters, gamelogs, pitcher/team stats
   statFind.js              Defensive deep-search helpers for ESPN's loosely-shaped stat blobs
   streaks.js                Pure streak/rate math over a normalized game log
   trends.js                   Builds the MLB trend feed: streaks + matchup + weather + heuristic score
@@ -977,6 +997,7 @@ server/
 test/
   predictionLog.test.js    node:test coverage for predictionLog.js
   predictionEval.test.js     node:test coverage for predictionEval.js (analyzeBetFn stubbed — no live ESPN in this sandbox)
+  mlbLineup.test.js            node:test coverage for getConfirmedLineup() (fetch stubbed with fixtures matching a real confirmed/unconfirmed live response)
 src/
   App.jsx           Tabs, sport switcher, slip state
   api.js             Frontend fetch wrappers
@@ -995,6 +1016,22 @@ src/
 
 ## Extending it
 
+- **Pitcher workload data (pitch counts, batters faced, days rest,
+  starter-vs-opener role)**: `getConfirmedLineup()`'s diagnostic run also
+  checked `summary?event=`'s response for these and found none — no
+  pitch-count/batters-faced field, nothing rest-related. `getPitcherGameLog()`
+  already has each start's date, so days rest is at least computable from
+  consecutive log entries without a new endpoint; pitch count/opener-role
+  likely need a different ESPN endpoint (unverified) or a source like
+  Baseball Savant. Not built yet.
+- **Matchup-specific K/contact rates (Priority 2)**: confirmed opposing
+  lineup's K rate vs. the starter's handedness, pitcher K/BB vs. LHB/RHB,
+  swinging-strike/contact rates — needs Statcast-tier data ESPN's free API
+  doesn't have. Scraping Baseball Savant/FanGraphs (preferring their CSV/
+  leaderboard bulk-export endpoints over raw HTML) was chosen over a paid
+  provider; not built yet — needs its own live-response verification pass
+  the same way every other data source in this app got one, in a separate
+  adapter module kept apart from the prediction logic that would consume it.
 - **Add a league to the edge feed**: add one entry to `server/sports.js`
   (Elo constants + ESPN/Odds API sport keys); ESPN's site API and The Odds
   API both cover NHL and most major soccer leagues with the same URL shape.

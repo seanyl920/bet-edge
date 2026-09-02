@@ -16,7 +16,7 @@
 // silent change (`rankedBy: "calibration"` vs `"heuristic"`).
 
 import { getScoreboard } from "./espn.js";
-import { getProbablePitchers, getTeamBatters, getBatterGameLog, getPitcherGameLog, getTeamBattingContext } from "./mlbData.js";
+import { getProbablePitchers, getConfirmedLineup, getTeamBatters, getBatterGameLog, getPitcherGameLog, getTeamBattingContext } from "./mlbData.js";
 import { consecutiveStreak, countInLastN, vsTeamSplit } from "./streaks.js";
 import { getGameWeather, weatherImpactNote } from "./weather.js";
 import { MLB_PARKS } from "./parks.js";
@@ -33,6 +33,19 @@ const HR_STREAK_MIN = 2;
 const HR_HOT_IN_10_MIN = 3;
 const K_STREAK_MIN = 3;
 const K_HOT_AVG_MIN = 7;
+
+// Confirmed live (Sept 2026 — see server/mlbData.js's getConfirmedLineup
+// comment): ESPN's summary endpoint distinguishes a posted, confirmed
+// starting lineup from "not posted yet" by whether the boxscore's batting
+// athletes array is populated at all. When it isn't yet, this app still
+// scans the full roster (the only list available) rather than showing
+// nothing — but per this project's own instruction, missing confirmation
+// must reduce confidence, not silently vanish or get treated as certain.
+// Flat score penalty, same additive style as every other bonus/penalty
+// here — not a fabricated probability adjustment, just a rank demotion so
+// a confirmed-lineup trend is preferred over an otherwise-identical
+// projected one.
+const UNCONFIRMED_LINEUP_PENALTY = 3;
 
 const PROP_MARKET = {
   hitStreak: "batter_hits",
@@ -154,8 +167,26 @@ async function getParkWeather(sport, homeAbbreviation, isoDate) {
   }
 }
 
-async function battingTrendsForTeam({ event, batterTeamId, batterTeamName, oppTeamId, oppTeamName, oppPitcher, park, weather }) {
-  const batters = await getTeamBatters(batterTeamId);
+async function battingTrendsForTeam({ event, batterTeamId, batterTeamName, oppTeamId, oppTeamName, oppPitcher, park, weather, lineup }) {
+  // Use the CONFIRMED starting lineup when one has posted — never the full
+  // roster passed off as if it were the lineup (a real instruction this
+  // project operates under; see getConfirmedLineup's own comment for how
+  // "confirmed" is actually detected). A confirmed lineup also carries each
+  // starter's real batting-order slot, which a full-roster scan never had.
+  // Fall back to the full roster only when nothing's posted yet, and label
+  // that fallback explicitly rather than let it look as certain as a real
+  // lineup.
+  const battingOrderById = new Map();
+  let batters;
+  let lineupStatus;
+  if (lineup?.confirmed) {
+    batters = lineup.batters.map((b) => ({ id: b.id, name: b.name }));
+    for (const b of lineup.batters) battingOrderById.set(b.id, b.battingOrder);
+    lineupStatus = "confirmed";
+  } else {
+    batters = await getTeamBatters(batterTeamId);
+    lineupStatus = "projected";
+  }
   // ERA and WHIP both come from getProbablePitchers now (its `probables`
   // field carries season stats directly — see mlbData.js's Known-issue
   // history note). This used to also call getPitcherSeasonStats (the
@@ -184,13 +215,18 @@ async function battingTrendsForTeam({ event, batterTeamId, batterTeamName, oppTe
         eventId: event.id,
         commenceTime: event.date,
         matchup: `${event.away.name} @ ${event.home.name}`,
-        player: { id: batter.id, name: batter.name, team: batterTeamName },
+        player: { id: batter.id, name: batter.name, team: batterTeamName, battingOrder: battingOrderById.get(batter.id) ?? null },
         opponent: { team: oppTeamName, pitcher: oppPitcher },
         pitcherStats,
         matchupLabel: matchup.label,
         vsTeamNote: vsTeam.note,
         park: park ? { name: park.name, note: park.note ?? null } : null,
         weather,
+        // "confirmed" = this player's real, posted starting-lineup slot for
+        // this game; "projected" = no lineup posted yet, this is just
+        // "someone on the roster" — see getConfirmedLineup. Never silently
+        // presented as if the two were the same thing.
+        lineupStatus,
       };
 
       const batterTrends = [];
@@ -236,6 +272,14 @@ async function battingTrendsForTeam({ event, batterTeamId, batterTeamName, oppTe
           streakValue: split.games,
           score: Math.round(split.avg * 20) + Math.min(Math.floor(split.AB / 10), 3) + matchup.bonus,
         });
+      }
+
+      // Reduce confidence when this batter's spot in today's lineup isn't
+      // actually confirmed yet — a flat rank demotion, not a fabricated
+      // probability, and never applied silently (lineupStatus is on every
+      // trend's `base` above so the UI can say so too).
+      for (const t of batterTrends) {
+        if (t.lineupStatus === "projected") t.score -= UNCONFIRMED_LINEUP_PENALTY;
       }
 
       trends.push(...batterTrends);
@@ -289,7 +333,7 @@ async function buildTrends(sport, hoursAhead) {
 
   const perGame = await Promise.all(
     games.map(async (event) => {
-      const probables = await getProbablePitchers(event.id);
+      const [probables, lineup] = await Promise.all([getProbablePitchers(event.id), getConfirmedLineup(event.id)]);
       const { park, weather } = await getParkWeather(sport, event.home.abbreviation, event.date);
 
       const [homeBatting, awayBatting, homeK, awayK] = await Promise.all([
@@ -302,6 +346,7 @@ async function buildTrends(sport, hoursAhead) {
           oppPitcher: probables.away,
           park,
           weather,
+          lineup: lineup.home,
         }),
         battingTrendsForTeam({
           event,
@@ -312,6 +357,7 @@ async function buildTrends(sport, hoursAhead) {
           oppPitcher: probables.home,
           park,
           weather,
+          lineup: lineup.away,
         }),
         pitcherKTrends({
           event,
