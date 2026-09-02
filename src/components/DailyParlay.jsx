@@ -122,7 +122,10 @@ export default function DailyParlay({ onAddLeg }) {
                     {leg.matchup}
                     <div className="muted small">{leg.sport?.toUpperCase()}</div>
                   </td>
-                  <td>{leg.selection}</td>
+                  <td>
+                    {leg.label}
+                    {leg.source === "trend" && <div className="muted small">player prop, not a team total</div>}
+                  </td>
                   <td>{fmtOdds(leg.americanOdds)}</td>
                   <td>{pct(leg.trueProb)}</td>
                 </tr>
