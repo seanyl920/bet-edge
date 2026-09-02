@@ -42,6 +42,18 @@ const MIN_LEG_PROB = 0.5;
 // so it's deliberately bounded to a small, fixed number per day rather than
 // checking every trend candidate.
 const MAX_TREND_ODDS_CHECKS = 8;
+// A lopsided team favorite routinely has a much higher raw probability than
+// a well-researched player prop — sportsbooks price props tighter, so a
+// legitimate streak/matchup pick often lands closer to 53-58% while a
+// blowout moneyline can be 70%+. Sorting the whole pool by probability
+// alone (the old behavior) meant team sides structurally crowded out props
+// even when a good one qualified, which read as "just today's biggest team
+// favorites" rather than what this app is actually built to find. Reserve
+// up to this many of the best-qualifying trend legs first; MIN_LEG_PROB
+// above still applies, so this never forces in a prop that isn't a real
+// favorite — it only stops a real one from losing a probability race it
+// doesn't need to win.
+const TREND_RESERVED_LEGS = 3;
 
 // See dateUtil.js — local calendar day, not UTC, for the same reason
 // postmortem.js needs it: UTC midnight is mid-evening for a US MLB slate.
@@ -239,8 +251,20 @@ function assembleTowardTarget(candidates) {
     if (c.eventId) usedEvents.add(c.eventId);
   };
 
+  // Reserve slots for the best-qualifying trend (player-prop) legs first —
+  // see TREND_RESERVED_LEGS above for why this needs to happen before the
+  // general probability sort, not as part of it.
+  const trendFavorites = byFavorite.filter((c) => c.source === "trend");
+  for (const c of trendFavorites) {
+    if (chosen.length >= TREND_RESERVED_LEGS) break;
+    if (combinedDecimal >= TARGET_DECIMAL_ODDS || chosen.length >= MAX_LEGS) break;
+    if (c.eventId && usedEvents.has(c.eventId)) continue;
+    add(c);
+  }
+
   for (const c of byFavorite) {
     if (combinedDecimal >= TARGET_DECIMAL_ODDS || chosen.length >= MAX_LEGS) break;
+    if (chosen.includes(c)) continue;
     if (c.eventId && usedEvents.has(c.eventId)) continue;
     add(c);
   }

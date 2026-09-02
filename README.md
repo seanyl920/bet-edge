@@ -379,6 +379,26 @@ from the start.
   else in this app for exactly this kind of local-day question. Verified
   against the exact reported case (a game 7 days out) plus today-early,
   today-late-crossing-UTC-midnight, and tomorrow cases.
+- **With real edges finally flowing, the daily parlay skewed almost
+  entirely toward team moneylines/spreads — user's read: "these picks
+  dont have research behind them," which prompted checking whether that
+  was actually true.** It wasn't a research gap (team picks are real Elo
+  output blended with live market odds; trend picks are the same
+  streak/matchup engine as the Trends tab, or this app's own calibrated
+  hit rate) — it was `assembleTowardTarget()` sorting the whole candidate
+  pool by raw probability and filling greedily. A lopsided team favorite
+  routinely posts a higher raw probability than a legitimate player prop
+  (sportsbooks price props tighter), so team sides structurally won that
+  race even when a good, qualifying prop existed. Fixed: reserve up to
+  `TREND_RESERVED_LEGS` (3) of the best-qualifying trend legs first,
+  before the general fill — `MIN_LEG_PROB` still applies to them, so this
+  never forces in a prop that isn't a real favorite, it only stops a real
+  one from losing a probability race it didn't need to be in. Verified
+  with a candidate pool of 20 team favorites all priced higher than 2
+  qualifying trend legs — confirmed both trend legs are now included
+  (previously would have been crowded out entirely), a 5-trend-candidate
+  case correctly caps at the top 3 by probability, and a zero-trend-
+  candidate pool behaves identically to before (no regression).
 
 ## Daily longshot parlay
 
@@ -392,7 +412,12 @@ heavily-favored plays: every priced moneyline/spread side across every sport
 bounded number of MLB trend candidates checked against real player-prop
 odds. It greedily stacks the shortest-priced legs, preferring different
 games over stacking the same game twice, until the combined price reaches
-roughly **+10000**.
+roughly **+10000** — with up to `TREND_RESERVED_LEGS` (3) of the
+best-qualifying player-prop legs reserved first, so a lopsided team
+favorite (routinely a higher raw probability than even a well-researched
+prop, since sportsbooks price props tighter) doesn't crowd every prop out
+of a parlay that's supposed to be pulling from both the edge feed and
+MLB trends.
 
 **Read this before betting it for real:** combining many favorites into a
 big multiplier does not create positive expected value. The vig compounds on
