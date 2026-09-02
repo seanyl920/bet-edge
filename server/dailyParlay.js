@@ -82,14 +82,30 @@ async function edgeCandidates() {
         continue;
       }
       warn("edgeCandidates", `${sport.key}: ${edges.length} priced side(s) returned`);
-      if (edges.length > 0) {
-        const sample = edges[0];
+      // getEdgeFeed() intentionally shows every upcoming priced game, not
+      // just today's — that's the right behavior for the main Edge Feed
+      // tab (you want to see next week's NFL lines there too), but wrong
+      // for a "today's favorites" parlay: a leg for a game a week out
+      // shouldn't be stacked into something meant to resolve today. The
+      // Trends side already has this same-day restriction (gamesInWindow);
+      // the edge-feed side never did. Confirmed live: the user reported
+      // NFL games from a week out (season hadn't started yet) showing up
+      // here. Filter to this app's own local calendar day.
+      const todaysEdges = edges.filter((e) => localDateKey(e.commenceTime) === todayKey());
+      if (todaysEdges.length !== edges.length) {
+        warn(
+          "edgeCandidates",
+          `${sport.key}: ${edges.length - todaysEdges.length} of ${edges.length} priced side(s) excluded — not today's date`
+        );
+      }
+      if (todaysEdges.length > 0) {
+        const sample = todaysEdges[0];
         warn(
           "edgeCandidates",
           `${sport.key} sample edge: americanOdds=${sample.americanOdds} decimalOdds=${sample.decimalOdds} modelProb=${sample.modelProb} marketProb=${sample.marketProb} blendedProb=${sample.blendedProb} sampleSize=${sample.sampleSize}`
         );
       }
-      for (const e of edges) {
+      for (const e of todaysEdges) {
         out.push({
           source: "edge",
           sport: sport.key,

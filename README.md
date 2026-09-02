@@ -365,6 +365,20 @@ from the start.
   different field tomorrow), but this is the fix that makes real Elo
   ratings, real edges, and real postmortem grading start happening again
   instead of merely stopping the bleeding.
+- **With real edges finally flowing after the fix above, the daily parlay
+  started including NFL games a full week out** (reported by the user:
+  games "don't start until the 9th" showing up in a parlay meant to
+  resolve today). `getEdgeFeed()` intentionally shows every upcoming
+  priced game, not just today's — correct for the main Edge Feed tab,
+  where you'd want to browse next week's lines too — but `dailyParlay.js`
+  was reusing that same unfiltered list for a construct explicitly framed
+  as "today's favorites." The Trends side already had this same-day
+  restriction (`gamesInWindow`); the edge-feed side never did. Fixed:
+  `edgeCandidates()` now filters to the local calendar day before
+  building candidates, the same `localDateKey()` helper used everywhere
+  else in this app for exactly this kind of local-day question. Verified
+  against the exact reported case (a game 7 days out) plus today-early,
+  today-late-crossing-UTC-midnight, and tomorrow cases.
 
 ## Daily longshot parlay
 
