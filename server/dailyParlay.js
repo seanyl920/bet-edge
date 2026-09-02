@@ -28,6 +28,14 @@ const FILE = path.join(DATA_DIR, "dailyParlay.json");
 const TARGET_AMERICAN_ODDS = 10000; // +10000
 const TARGET_DECIMAL_ODDS = americanToDecimal(TARGET_AMERICAN_ODDS); // ~101
 const MAX_LEGS = 25; // sanity cap so a thin day can't loop forever without ever hitting target
+// "Favorites" means favorites: a leg only qualifies if it's more likely than
+// not to hit. Without this floor, a thin candidate pool could get padded out
+// with a longshot prop (e.g. "Over 2.5 HR" at +19900, ~0.5% likely) just to
+// force the number up — which defeats the entire point of a favorites stack
+// and quietly turns "the app's most confident picks" into one lottery
+// ticket wearing a favorites costume. Better to honestly fall short of
+// +10000 on a thin day than include a leg like that.
+const MIN_LEG_PROB = 0.5;
 // Player-prop odds are a per-event, credit-costing call (see oddsApi.js) —
 // this is the ONE place in the app that fetches them without a user click,
 // so it's deliberately bounded to a small, fixed number per day rather than
@@ -155,7 +163,8 @@ function assembleTowardTarget(candidates) {
 
 async function build() {
   const [edges, trends] = await Promise.all([edgeCandidates(), trendCandidates()]);
-  const candidates = [...edges, ...trends].filter((c) => c.trueProb != null && c.decimalOdds != null);
+  const allPriced = [...edges, ...trends].filter((c) => c.trueProb != null && c.decimalOdds != null);
+  const candidates = allPriced.filter((c) => c.trueProb >= MIN_LEG_PROB);
 
   if (candidates.length === 0) {
     return {
@@ -163,7 +172,10 @@ async function build() {
       generatedAt: new Date().toISOString(),
       legs: [],
       combined: null,
-      note: "No priced legs available to build from — check that ODDS_API_KEY is configured and there are games today.",
+      note:
+        allPriced.length > 0
+          ? `Found ${allPriced.length} priced leg(s) today, but none were favorites (≥${Math.round(MIN_LEG_PROB * 100)}% implied) — nothing honest to build a favorites parlay from.`
+          : "No priced legs available to build from — check that ODDS_API_KEY is configured and there are games today.",
       hitTarget: false,
     };
   }
