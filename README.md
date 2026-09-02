@@ -302,6 +302,43 @@ from the start.
   batting-SO and pitching-K deliberately different values, confirming the
   right one is picked.
 
+- **Almost every edge-feed pick (NFL and MLB both) had a `null` model
+  probability, so the daily parlay could never find enough favorites to
+  build from — reported by the user as "it's only putting the one guy in
+  the daily parlay."** Root cause: `EloEngine.getRating()` fell back to
+  `BASE_RATING` only for a *missing* entry (`?? BASE_RATING`, which
+  doesn't catch an entry that's actually present but `NaN`). If a single
+  game ever got applied with a non-finite score — or the season-carryover
+  seed computed one from a corrupted prior rating — that team's rating
+  became `NaN` and stayed `NaN` forever; every future opponent's updated
+  rating was then `NaN` too, and every team *they* played after that, and
+  so on. Over a season this can spread from one bad data point to nearly
+  the entire league, which is exactly what live diagnostics showed: real
+  edges with valid market odds but `modelProb: null` (a rounded `NaN`)
+  across both NFL, at a fresh season boundary where carryover had just
+  run, and MLB, deep in-season — different Elo states, same underlying
+  contamination pattern. Found via the same live-diagnostic-then-fix loop
+  as the ESPN issues above, but this one didn't need ESPN's actual
+  response shape — the `[dailyParlay]` logging added investigating this
+  same report showed real market odds with `modelProb=null`, which was
+  enough to trace straight to `elo.js` without any live network access.
+  Fixed in three places: `getRating()` now uses `Number.isFinite()`
+  instead of `??`, so a corrupted entry self-heals to `BASE_RATING`
+  instead of propagating; `applyResult()` now rejects a non-finite score
+  outright (with a warning naming the event) instead of computing a `NaN`
+  delta from it; and `eloBootstrap.js`'s carryover seeding requires a
+  finite prior rating before using it, skipping (with a warning) a `NaN`
+  one instead of seeding a team's very first rating of the season with
+  it. Verified with a script exercising all three guards together
+  (a normal game, a rejected bad-score game, a team with a directly
+  pre-corrupted rating self-healing, and confirming it no longer spreads
+  to whoever plays it next) plus an isolated test of the carryover-seed
+  guard. Caught a bug in my own first version of the score guard while
+  writing that test: `Number(null)` is `0`, not `NaN` — coercing a
+  missing score straight through `Number()` would have silently turned a
+  missing score into a real 0-0 game instead of rejecting it; fixed to
+  treat `null`/`undefined` as invalid before coercion.
+
 ## Daily longshot parlay
 
 Once a day (the first time you load the tab after the calendar date rolls

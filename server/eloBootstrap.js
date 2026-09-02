@@ -40,6 +40,7 @@ async function buildFinalRatings(sport, teams, season) {
       awayTeamId: ev.away.teamId,
       homeScore: ev.home.score,
       awayScore: ev.away.score,
+      eventId: ev.id,
     });
   }
   return engine.ratings; // Map<teamId, rating>
@@ -66,8 +67,19 @@ async function buildEngine(sport) {
     const finalRatings = await buildFinalRatings(sport, teams, lastSeasonYear);
     for (const team of teams) {
       const prior = finalRatings.get(team.id);
-      if (prior != null) {
+      // `prior != null` alone isn't enough — a NaN prior (itself possible
+      // if last season's own replay hit a bad score before elo.js's
+      // applyResult() guard existed, or from some other source) is not
+      // null/undefined and would slip through, seeding this team's rating
+      // with NaN from the very first game of the new season. That NaN
+      // would then spread to every team it plays. Require a real finite
+      // number before using it as a carryover seed.
+      if (Number.isFinite(prior)) {
         engine.ratings.set(team.id, CARRYOVER_WEIGHT * prior + (1 - CARRYOVER_WEIGHT) * BASE_RATING);
+      } else if (prior != null) {
+        console.warn(
+          `[eloBootstrap] ${sport.key}: team ${team.id}'s prior-season rating was non-finite (${prior}) — skipped carryover seed, using flat ${BASE_RATING} for this team instead.`
+        );
       }
     }
   } catch (err) {
@@ -97,6 +109,7 @@ async function buildEngine(sport) {
       awayTeamId: ev.away.teamId,
       homeScore: ev.home.score,
       awayScore: ev.away.score,
+      eventId: ev.id,
     });
   }
 
