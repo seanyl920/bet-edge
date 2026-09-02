@@ -40,29 +40,38 @@ export async function getProbablePitchers(espnEventId) {
   return cached(`mlb:probables:${espnEventId}`, 15 * 60 * 1000, async () => {
     try {
       const data = await getJson(`${SITE_BASE}/summary?event=${espnEventId}`);
-      const comp = data?.header?.competitions?.[0] ?? data?.competitions?.[0];
-      const list = comp?.probables ?? data?.gameInfo?.probables ?? data?.probables;
-      if (!Array.isArray(list)) {
-        warn(
-          "getProbablePitchers",
-          `event ${espnEventId}: no probables array found (checked comp.probables, gameInfo.probables, data.probables). ` +
-            `Top-level keys: ${Object.keys(data ?? {}).join(", ")}`
-        );
-        return { home: null, away: null };
+
+      // Confirmed against a live pregame response: there's no dedicated
+      // "probables" field on this endpoint at all (the earlier guess). The
+      // starting pitcher is the sole entry in each team's boxscore "pitching"
+      // stat category (flagged `starter: true`) — boxscore is populated with
+      // the starting lineup before first pitch, not just after. `data.rosters`
+      // carries the home/away flag per team id, which boxscore.players itself
+      // doesn't, so cross-reference the two.
+      const homeAwayByTeamId = {};
+      for (const r of data?.rosters ?? []) {
+        if (r?.team?.id && r?.homeAway) homeAwayByTeamId[r.team.id] = r.homeAway;
       }
 
-      const byHomeAway = (ha) => {
-        const entry = list.find((p) => p.homeAway === ha);
-        const athlete = entry?.athlete ?? entry?.player;
-        if (!athlete?.id) return null;
-        return {
+      const result = { home: null, away: null };
+      for (const teamBlock of data?.boxscore?.players ?? []) {
+        const ha = homeAwayByTeamId[teamBlock?.team?.id];
+        if (!ha) continue;
+        const pitching = (teamBlock.statistics ?? []).find((c) => String(c.type).toLowerCase().includes("pitch"));
+        const starter = pitching?.athletes?.find((a) => a.starter) ?? pitching?.athletes?.[0];
+        const athlete = starter?.athlete;
+        if (!athlete?.id) continue;
+        result[ha] = {
           id: String(athlete.id),
           name: athlete.displayName ?? athlete.fullName ?? athlete.shortName ?? "Unknown",
         };
-      };
-      const result = { home: byHomeAway("home"), away: byHomeAway("away") };
+      }
+
       if (!result.home && !result.away) {
-        warn("getProbablePitchers", `event ${espnEventId}: probables array present (len ${list.length}) but neither home nor away athlete parsed out of it. Sample entry: ${JSON.stringify(list[0])}`);
+        warn(
+          "getProbablePitchers",
+          `event ${espnEventId}: no starter parsed out of boxscore.players. Team ids seen: ${(data?.boxscore?.players ?? []).map((t) => t?.team?.id).join(",")}, rosters homeAway map: ${JSON.stringify(homeAwayByTeamId)}`
+        );
       }
       return result;
     } catch (err) {
