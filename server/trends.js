@@ -95,11 +95,17 @@ function pitcherMatchupLabel(era) {
   return { label: "tough matchup — sharp starter", bonus: -1 };
 }
 
-function lineupMatchupLabel(teamAvg) {
-  if (teamAvg == null) return { label: "unknown", bonus: 0 };
-  if (teamAvg <= 0.235) return { label: "favorable matchup — low-contact lineup", bonus: 2 };
-  if (teamAvg <= 0.255) return { label: "roughly neutral matchup", bonus: 0 };
-  return { label: "tough matchup — high-contact lineup", bonus: -1 };
+// Was keyed off team AVG (a low-average lineup treated as a proxy for
+// "strikes out a lot") — a real signal for a K prop, but an indirect one: a
+// lineup can hit for a low average by making weak contact without actually
+// whiffing much. Team strikeout rate (K% = SO / PA) is the direct version of
+// the same question, so this now reads that instead. Thresholds are set
+// around modern-era MLB's ~22-23% league-average K rate.
+function lineupMatchupLabel(teamKRate) {
+  if (teamKRate == null) return { label: "unknown", bonus: 0 };
+  if (teamKRate >= 0.25) return { label: "favorable matchup — high-strikeout lineup", bonus: 2 };
+  if (teamKRate >= 0.21) return { label: "roughly neutral matchup", bonus: 0 };
+  return { label: "tough matchup — low-strikeout lineup", bonus: -1 };
 }
 
 async function gamesInWindow(sport, hoursAhead) {
@@ -245,7 +251,7 @@ async function pitcherKTrends({ event, pitcher, pitcherTeamName, oppTeamId, oppT
   const kStreak = consecutiveStreak(log, (g) => g.SO >= 6);
   const last5 = log.slice(0, 5);
   const avgK = last5.length ? last5.reduce((s, g) => s + (g.SO ?? 0), 0) / last5.length : null;
-  const matchup = lineupMatchupLabel(oppContext.avg);
+  const matchup = lineupMatchupLabel(oppContext.kRate);
 
   if (kStreak < K_STREAK_MIN && (avgK == null || avgK < K_HOT_AVG_MIN)) return [];
 
@@ -256,7 +262,11 @@ async function pitcherKTrends({ event, pitcher, pitcherTeamName, oppTeamId, oppT
       matchup: `${event.away.name} @ ${event.home.name}`,
       type: "pitcherK",
       player: { id: pitcher.id, name: pitcher.name, team: pitcherTeamName },
-      opponent: { team: oppTeamName, teamBattingAvg: oppContext.avg != null ? formatAvg(oppContext.avg) : null },
+      opponent: {
+        team: oppTeamName,
+        teamKRate: oppContext.kRate != null ? `${(oppContext.kRate * 100).toFixed(1)}%` : null,
+        teamBattingAvg: oppContext.avg != null ? formatAvg(oppContext.avg) : null,
+      },
       matchupLabel: matchup.label,
       park: park ? { name: park.name, note: park.note ?? null } : null,
       weather,

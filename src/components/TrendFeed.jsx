@@ -63,8 +63,12 @@ function TrendCard({ trend, sport, onAddLeg }) {
             {trend.pitcherStats.k9 != null ? ` · K/9 ${trend.pitcherStats.k9}` : ""}
           </div>
         )}
-        {trend.opponent.teamBattingAvg != null && (
-          <div className="muted small">Opposing lineup AVG: {trend.opponent.teamBattingAvg}</div>
+        {(trend.opponent.teamKRate != null || trend.opponent.teamBattingAvg != null) && (
+          <div className="muted small">
+            {trend.opponent.teamKRate != null && `Opposing lineup K rate: ${trend.opponent.teamKRate}`}
+            {trend.opponent.teamKRate != null && trend.opponent.teamBattingAvg != null && " · "}
+            {trend.opponent.teamBattingAvg != null && `AVG: ${trend.opponent.teamBattingAvg}`}
+          </div>
         )}
         {trend.vsTeamNote && trend.type !== "vsTeamHistory" && (
           <div className="muted small">Also: {trend.vsTeamNote} (this-season sample — see README caveat)</div>

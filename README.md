@@ -279,6 +279,29 @@ shape of two ESPN endpoints before writing a single line of fix, the same
 process this project has used for every ESPN reverse-engineering problem
 from the start.
 
+- **The strikeout-prop trend's matchup label used team batting AVG as a
+  proxy for "strikes out a lot," when a direct strikeout rate was sitting
+  right there unused.** The user pointed out that for a strikeout prop,
+  the opposing lineup's actual K rate is much more relevant than their
+  batting average — a low-average team isn't necessarily a high-strikeout
+  one (it can get there by weak contact instead of whiffing). Correct:
+  `getTeamBattingContext()` was already fetching a `strikeouts` field, but
+  nothing ever used it. Fixed: it now also fetches plate appearances and
+  computes a real K% (strikeouts / PA), and `pitcherKTrends()`'s matchup
+  label and score bonus are keyed off that instead of AVG (AVG is still
+  shown alongside it for context). Found a real bug while wiring this up:
+  the old `strikeouts` fetch used a whole-tree search for either "SO" or
+  "K", and a team's own stats response carries *both* — "SO" under the
+  batting category (the batters' own strikeouts, what this needs) and "K"
+  under pitching (their pitching staff's strikeouts, the wrong number
+  entirely). It happened to read correctly only because ESPN's response
+  lists the batting category first — correct by luck, not by design, and
+  one response reordering away from silently reporting the wrong side.
+  Fixed to scope the search explicitly to the batting category. Verified
+  against the real confirmed response shape with a mock that gives
+  batting-SO and pitching-K deliberately different values, confirming the
+  right one is picked.
+
 ## Daily longshot parlay
 
 Once a day (the first time you load the tab after the calendar date rolls

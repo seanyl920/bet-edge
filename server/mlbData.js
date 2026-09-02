@@ -295,18 +295,43 @@ export async function getPitcherSeasonStats(playerId) {
   });
 }
 
-/** Team-level batting AVG and strikeout total, for pitcher-K-prop matchup context. */
+/** Team-level batting AVG and strikeout rate (own batters' K%), for pitcher-K-prop matchup context. */
 export async function getTeamBattingContext(teamId) {
   return cached(`mlb:teambat:${teamId}`, 6 * 60 * 60 * 1000, async () => {
     try {
       const data = await getJson(`${SITE_BASE}/teams/${teamId}/statistics`);
+      // Confirmed live: `data.results.stats.categories` holds both a
+      // "batting" and a "pitching" category, and both carry a strikeout
+      // stat — "SO" for the team's own batters, "K" for their pitching
+      // staff. A whole-tree search for either abbreviation (the old
+      // findStatValue call) happened to land on the batting one only
+      // because that category is listed first — correct by luck, not by
+      // design, and one response reordering away from silently reporting
+      // the wrong side. Scope explicitly to the "batting" category so this
+      // always reads the lineup's own strikeouts.
+      const categories = data?.results?.stats?.categories ?? [];
+      const battingStats = categories.find((c) => c?.name === "batting")?.stats ?? [];
+      const statValue = (abbr) => {
+        const raw = battingStats.find((s) => s?.abbreviation === abbr)?.value;
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : null;
+      };
+      const strikeouts = statValue("SO");
+      const plateAppearances = statValue("PA");
       return {
-        avg: findStatValue(data, ["AVG"]),
-        strikeouts: findStatValue(data, ["SO", "K"]),
+        avg: statValue("AVG"),
+        strikeouts,
+        plateAppearances,
+        // K% = strikeouts / plate appearances — the standard way to talk
+        // about a "strikeout-prone lineup," and a more direct signal for a
+        // strikeout prop than team AVG (a low-average team isn't
+        // necessarily a high-strikeout one, e.g. a lineup that makes weak
+        // contact but rarely whiffs).
+        kRate: strikeouts != null && plateAppearances ? strikeouts / plateAppearances : null,
       };
     } catch (err) {
       warn("getTeamBattingContext", `team ${teamId}: request failed — ${err.message}`);
-      return { avg: null, strikeouts: null };
+      return { avg: null, strikeouts: null, plateAppearances: null, kRate: null };
     }
   });
 }
