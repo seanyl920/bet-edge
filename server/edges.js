@@ -13,6 +13,7 @@ import { getEloEngine } from "./eloBootstrap.js";
 import { getOdds } from "./oddsApi.js";
 import { matchEspnEvent } from "./teamMatch.js";
 import { coverProbability } from "./elo.js";
+import { recordPrediction } from "./predictionLog.js";
 import {
   americanToDecimal,
   devigMultiplicative,
@@ -169,6 +170,47 @@ function makeEdge({ event, sport, market, side, team, line, best, modelProb, mar
   };
 }
 
+// Logs the FULL distribution of priced edge candidates (not just the ones
+// that clear the EV threshold) so a later evaluation isn't self-selected
+// toward whatever already looked good — see predictionLog.js. `edge` is
+// exactly what makeEdge() returns; `leg` is built to match the shape
+// EdgeFeed.jsx already attaches to a manually-added leg, so postmortem.js's
+// analyzeBet() can grade this later without a second implementation.
+function logEdgePrediction(edge) {
+  recordPrediction({
+    sport: edge.sport,
+    kind: "edge",
+    subjectId: edge.eventId,
+    subjectName: edge.matchup,
+    market: edge.market,
+    side: edge.side,
+    point: edge.line ?? null,
+    predictedProb: edge.blendedProb,
+    marketProb: edge.marketProb,
+    probSource: "elo-blended",
+    leg: {
+      label: `${edge.team} ${edge.market}${edge.line != null ? ` ${edge.line}` : ""}`,
+      eventId: edge.eventId,
+      commenceTime: edge.commenceTime,
+      matchup: edge.matchup,
+      market: edge.market,
+      selection: edge.side,
+      americanOdds: edge.americanOdds,
+      sport: edge.sport,
+      context: {
+        kind: "edge",
+        side: edge.side,
+        team: edge.team,
+        line: edge.line,
+        modelProb: edge.modelProb,
+        rawEloProb: edge.modelProb,
+        marketProb: edge.marketProb,
+        sampleSize: edge.sampleSize,
+      },
+    },
+  });
+}
+
 export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
   const [{ engine }, scoreboard] = await Promise.all([getEloEngine(sport), getScoreboard(sport)]);
   const upcoming = scoreboard.filter((e) => e.statusName === "STATUS_SCHEDULED");
@@ -221,6 +263,7 @@ export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
         best: ml.bestHome, modelProb: prediction.homeWinProb, marketProb: ml.consensus.home,
         sampleSize: prediction.sampleSize,
       });
+      logEdgePrediction(edge);
       if (edge.ev >= threshold) edges.push(edge);
     }
     if (ml.bestAway) {
@@ -229,6 +272,7 @@ export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
         best: ml.bestAway, modelProb: prediction.awayWinProb, marketProb: ml.consensus.away,
         sampleSize: prediction.sampleSize,
       });
+      logEdgePrediction(edge);
       if (edge.ev >= threshold) edges.push(edge);
     }
 
@@ -261,6 +305,7 @@ export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
           best: spread.bestHome, modelProb: coverProbHome, marketProb: spread.consensus.home,
           sampleSize: prediction.sampleSize,
         });
+        logEdgePrediction(edge);
         if (edge.ev >= threshold) edges.push(edge);
       }
       if (spread.bestAway) {
@@ -269,6 +314,7 @@ export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
           best: spread.bestAway, modelProb: coverProbAway, marketProb: spread.consensus.away,
           sampleSize: prediction.sampleSize,
         });
+        logEdgePrediction(edge);
         if (edge.ev >= threshold) edges.push(edge);
       }
     }

@@ -5,3 +5,4 @@ dist
 .DS_Store
 data/bets.json
 data/dailyParlay.json
+data/predictionLog.jsonl

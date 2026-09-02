@@ -14,6 +14,7 @@ import { addBet, betLogSummary, deleteBet, getBet, listBets, updateBet } from ".
 import { analyzeBet } from "./postmortem.js";
 import { captureClosingPrice } from "./clv.js";
 import { getCalibration } from "./calibration.js";
+import { evaluatePredictions } from "./predictionEval.js";
 import { hasOddsApiKey } from "./oddsApi.js";
 import { clearCache } from "./cache.js";
 
@@ -201,6 +202,13 @@ app.delete(
   wrap(async (req, res) => {
     const removed = await deleteBet(req.params.id);
     res.status(removed ? 204 : 404).end();
+  })
+);
+
+app.get(
+  "/api/predictions/eval",
+  wrap(async (req, res) => {
+    res.json(await evaluatePredictions());
   })
 );
 

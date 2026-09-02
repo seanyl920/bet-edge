@@ -21,6 +21,7 @@ import { getTrendFeed, getTrendPropOdds } from "./trends.js";
 import { combineLegs } from "./parlay.js";
 import { americanToDecimal } from "./oddsMath.js";
 import { localDateKey } from "./dateUtil.js";
+import { recordPrediction } from "./predictionLog.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, "..", "data");
@@ -173,6 +174,47 @@ async function edgeCandidates() {
 }
 
 /** Top MLB trend candidates, each checked against real prop odds — bounded, see MAX_TREND_ODDS_CHECKS. */
+// Logs every priced Over/Under outcome for a trend — not just the eligible
+// favorite the parlay build actually chooses — so a later evaluation sees
+// the full distribution of what this app priced, not a sample already
+// filtered toward favorites. `leg` matches the shape TrendFeed.jsx attaches
+// when a user manually adds this exact kind of leg (see predictionLog.js).
+function logTrendPrediction(t, o) {
+  recordPrediction({
+    sport: "mlb",
+    kind: "trend",
+    subjectId: t.player.id,
+    subjectName: t.player.name,
+    market: t.type,
+    side: o.side,
+    point: o.point,
+    predictedProb: o.trueProb,
+    marketProb: o.devigProb ?? null,
+    probSource: o.probSource ?? "devig",
+    leg: {
+      label: `${t.player.name} ${o.side}${o.point != null ? ` ${o.point}` : ""} (${t.type})`,
+      eventId: t.eventId,
+      commenceTime: t.commenceTime,
+      matchup: t.matchup,
+      market: t.type,
+      selection: `${o.side}${o.point != null ? ` ${o.point}` : ""}`,
+      americanOdds: o.price,
+      sport: "mlb",
+      context: {
+        kind: "trend",
+        trendType: t.type,
+        playerId: t.player.id,
+        playerName: t.player.name,
+        streakValue: t.streakValue,
+        matchupLabel: t.matchupLabel,
+        score: t.score,
+        propSide: o.side,
+        propPoint: o.point,
+      },
+    },
+  });
+}
+
 async function trendCandidates() {
   const sport = SPORTS.mlb;
   let trends;
@@ -198,6 +240,14 @@ async function trendCandidates() {
         if (reason === "no-key") break;
         continue;
       }
+
+      // Log every priced outcome (Over and Under, favorite or not) before
+      // any of the eligibility/favorite filtering below narrows it down for
+      // the parlay build itself — see logTrendPrediction.
+      for (const o of outcomes) {
+        if (o.trueProb != null) logTrendPrediction(t, o);
+      }
+
       // "Over" is the natural side for every trend type this app builds
       // (continue the hit/RBI/HR streak, or clear the strikeout bar).
       //

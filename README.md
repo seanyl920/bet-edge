@@ -719,6 +719,56 @@ almost nothing will be calibrated, and that's expected. The Calibration tab
 shows the full table, including buckets that aren't calibrated yet, so you
 can see how close a signal is to having enough data behind it.
 
+## Prospective evaluation (prediction log)
+
+The feedback loop above only ever sees bets **you chose to log** — a small,
+self-selected sample that skews toward whatever already looked good. Before
+this app can honestly claim a model change is "more accurate" or "more
+profitable" than what came before it, or than the market, it needs a
+record of what it predicted written down *before* the outcome was known,
+across the full distribution of what it prices — not just the bets that
+made it into your slip.
+
+- **`server/predictionLog.js`** appends one line of JSONL to
+  `data/predictionLog.jsonl` for every candidate the edge feed or the daily
+  parlay's trend scan actually prices with a real probability tied to a real
+  line — every moneyline/spread candidate `edges.js` builds (before the EV
+  threshold filter, so favorites and non-edges are logged too, not just
+  what clears the bar), and every priced Over/Under outcome
+  `dailyParlay.js`'s trend scan checks (both sides, not just the favorite it
+  ends up choosing). Deduped to the first prediction per exact
+  (sport, market, side, point) per calendar day, so repeated page loads
+  don't spam the log. Each line carries the exact market/side/threshold, the
+  model's probability, the market's own devigged probability at that same
+  moment (`marketProb`), a `modelVersion` tag, and a `leg` snapshot in the
+  same shape a manually-added slip leg gets — so it can be graded later by
+  reusing `postmortem.js`'s existing `analyzeBet()` unchanged, not a second
+  grading implementation that could drift from the real one. Logging never
+  throws — a failure here must never break the feed that generated the
+  prediction.
+- **`server/predictionEval.js`** (`GET /api/predictions/eval`) reads that
+  log, grades every record that's decidable by now the same way a bet log
+  entry is graded, and aggregates hit rate + a [Brier
+  score](https://en.wikipedia.org/wiki/Brier_score) — for this app's own
+  `predictedProb` **and**, independently, for the `marketProb` captured at
+  the same moment — grouped by `modelVersion`/sport/kind/market. A record
+  that isn't decidable yet (game not final, missing snapshot, an ESPN
+  hiccup) is excluded from the aggregate entirely, never counted as a loss
+  or backfilled with a guess. Comparing the two Brier scores against each
+  other is what would eventually let this say "beats the devigged market"
+  or "doesn't" — with real numbers, not an assertion.
+
+**This is not a historical backtest, and doesn't claim to be one.** This
+app has no archive of past ESPN/odds snapshots to replay chronologically
+against old games, so there's nothing to backtest offline. What it can do
+— and now does — is start logging every prediction going forward, honestly,
+and grade it once real outcomes exist. Until enough volume accumulates,
+`n` for any group in `/api/predictions/eval` will just be small; nothing
+here pads that with anything else. No claim of improved accuracy or
+profitability should be made from this app until a group's `n` is large
+enough to mean something, and even then only against the specific
+`modelVersion`s being compared.
+
 ## Honesty & limits
 
 - **The model is a baseline, not a finished product.** Elo here only reacts
@@ -837,8 +887,13 @@ browser (React)
    ├──► /api/bets, /api/bets/:id  ──► Express ──► data/bets.json
    ├──► /api/bets/:id/analyze ──► Express ──► ESPN (per-leg outcome lookup) ──► data/bets.json
    ├──► /api/calibration     ──► Express ──► aggregates graded legs from data/bets.json
-   └──► /api/daily-parlay    ──► Express ──► edge feed + trend feed + bounded prop-odds checks ──► data/dailyParlay.json
+   ├──► /api/daily-parlay    ──► Express ──► edge feed + trend feed + bounded prop-odds checks ──► data/dailyParlay.json
+   └──► /api/predictions/eval ─► Express ──► grades data/predictionLog.jsonl via postmortem.js, aggregates hit-rate/Brier score
 ```
+
+The edge feed and daily-parlay trend scan also append every priced
+candidate to `data/predictionLog.jsonl` as a side effect (never blocking or
+failing the request that triggered it) — see [Prospective evaluation](#prospective-evaluation-prediction-log).
 
 The Odds API key stays server-side (`.env`, never shipped to the browser) and
 every automatic call to it is cached (5 min for live odds) since the free
@@ -912,11 +967,16 @@ server/
   calibration.js                          Aggregates graded legs into real hit-rate buckets
   clv.js                                    On-demand approximate closing-line capture
   dailyParlay.js                              Auto-builds one +10000 "favorites" longshot parlay per day
+  predictionLog.js                              Appends every priced prediction to data/predictionLog.jsonl for later grading
+  predictionEval.js                              Grades the prediction log via postmortem.js, aggregates hit-rate/Brier score
   weather.js                           Open-Meteo (NFL/MLB outdoor venues)
   stadiums.js                           NFL stadium coordinates + roof type
   parks.js                               MLB ballpark coordinates + roof type (no orientation/wind-direction claims — see caveats)
   dateUtil.js                              Local-calendar-day helper (UTC's day boundary is wrong for this app's actual usage)
   cache.js                                   In-memory TTL cache
+test/
+  predictionLog.test.js    node:test coverage for predictionLog.js
+  predictionEval.test.js     node:test coverage for predictionEval.js (analyzeBetFn stubbed — no live ESPN in this sandbox)
 src/
   App.jsx           Tabs, sport switcher, slip state
   api.js             Frontend fetch wrappers
@@ -961,14 +1021,21 @@ src/
   direction isn't provable with what this app has. A same-game copula or a
   historical same-game-parlay hit-rate table would let more of those get a
   real adjustment instead of just a warning.
-- **Automated tests + CI/lint**: this project has been validated the whole
-  way through by targeted node scripts run ad hoc during development (a
-  parlay math check here, a concurrent-write test there — see the
+- **Automated tests + CI/lint**: most of this project has been validated the
+  whole way through by targeted node scripts run ad hoc during development
+  (a parlay math check here, a concurrent-write test there — see the
   Known-issue history for specifics) plus manual boot-testing, not a
-  standing test suite. Turning the more reusable of those checks into a
-  real `test/` directory wired into CI (and adding basic linting) would
-  catch a regression automatically instead of relying on the next code
-  review to find it.
+  standing test suite. A real `test/` directory now exists (`npm test`,
+  Node's built-in `node:test` runner — no extra dependency) covering
+  `predictionLog.js` (append/read roundtrip, same-day dedup keyed to the
+  exact market/side/point, malformed-line resilience) and
+  `predictionEval.js` (grading/grouping/Brier-score math, via an injectable
+  `analyzeBetFn` stub since real grading needs live ESPN access this sandbox
+  doesn't have). Everything else in this list — the parlay math, calibration
+  buckets, doubleheader disambiguation, and the rest — is still only
+  validated by the ad hoc scripts referenced in the Known-issue history, not
+  yet ported into `test/`; neither is a CI workflow wired up to run any of
+  it automatically. Both remain real gaps, not done.
 - **`npm audit` currently reports 5 vulnerabilities (4 moderate, 1 high),
   in two clusters, checked directly rather than taken on a reviewer's
   count.** `esbuild`/Vite (moderate — the dev server can be made to proxy

@@ -506,6 +506,14 @@ export async function getTrendPropOdds(sport, espnEventId, playerName, trendType
   // that specific line — never mixed across points.
   attachDevigProbs(outcomes);
 
+  // Stash the pure devigged market number before calibration (below) may
+  // overwrite `.trueProb` in place — predictionLog.js's evaluation needs to
+  // compare this app's final claim against "contemporaneous devigged market
+  // odds" specifically (a real instruction this project operates under),
+  // which is impossible once the calibration override has clobbered the
+  // only copy of the devig number.
+  for (const o of outcomes) o.devigProb = o.trueProb;
+
   // Prefer this app's own real graded history for this EXACT line over the
   // devigged market number, the same priority the rest of this app uses —
   // but keyed to the specific (side, point), never the score-bucketed
