@@ -32,4 +32,6 @@ export const api = {
   deleteBet: (id) => request(`/bets/${id}`, { method: "DELETE" }),
   analyzeBet: (id) => request(`/bets/${id}/analyze`, { method: "POST" }),
   calibration: () => request("/calibration"),
+  dailyParlay: () => request("/daily-parlay"),
+  regenerateDailyParlay: () => request("/daily-parlay/regenerate", { method: "POST" }),
 };

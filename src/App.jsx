@@ -2,6 +2,7 @@ import { useState } from "react";
 import SportSwitcher from "./components/SportSwitcher.jsx";
 import EdgeFeed from "./components/EdgeFeed.jsx";
 import TrendFeed from "./components/TrendFeed.jsx";
+import DailyParlay from "./components/DailyParlay.jsx";
 import Games from "./components/Games.jsx";
 import GameDetail from "./components/GameDetail.jsx";
 import ParlaySlip from "./components/ParlaySlip.jsx";
@@ -12,6 +13,7 @@ import Disclaimer from "./components/Disclaimer.jsx";
 const TABS = [
   { key: "edges", label: "Edge feed" },
   { key: "trends", label: "Trends" },
+  { key: "dailyParlay", label: "Daily parlay" },
   { key: "games", label: "Games" },
   { key: "betlog", label: "Bet log" },
   { key: "calibration", label: "Calibration" },
@@ -51,6 +53,7 @@ export default function App() {
         <div className="app-content">
           {tab === "edges" && <EdgeFeed sport={sport} onAddLeg={addLeg} onSelectGame={setOpenGame} />}
           {tab === "trends" && <TrendFeed sport={sport} onAddLeg={addLeg} />}
+          {tab === "dailyParlay" && <DailyParlay onAddLeg={addLeg} />}
           {tab === "games" && <Games sport={sport} onSelectGame={setOpenGame} />}
           {tab === "betlog" && <BetLog refreshKey={betLogKey} />}
           {tab === "calibration" && <Calibration refreshKey={betLogKey} />}

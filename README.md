@@ -56,6 +56,41 @@ is even more explicitly "here's a lead," not "here's a probability."
 - **Context, not just numbers** — Elo ratings, sample size (games actually
   folded into the rating — trust it less early in a season), injury reports,
   and outdoor-stadium weather (NFL and MLB).
+- **Daily longshot parlay** — one auto-built parlay per calendar day, stacking
+  today's shortest-priced ("favorite") plays across the edge feed and MLB
+  trends toward a +10000 target payout. See [Daily longshot parlay](#daily-longshot-parlay)
+  below before trusting this one — it's a recreational construct, not a
+  value bet, and the app says so on the page itself, not just here.
+
+## Daily longshot parlay
+
+Once a day (the first time you load the tab after the calendar date rolls
+over — this is a local dev-server tool, not an always-on background job, so
+"once a day" means "once per day you actually open it," persisted to
+`data/dailyParlay.json` so it doesn't change again until the date rolls or
+you hit Regenerate), the app assembles one big parlay from today's most
+heavily-favored plays: every priced moneyline/spread side across every sport
+(not just the ones flagged as +EV — the full "favorites" universe), plus a
+bounded number of MLB trend candidates checked against real player-prop
+odds. It greedily stacks the shortest-priced legs, preferring different
+games over stacking the same game twice, until the combined price reaches
+roughly **+10000**.
+
+**Read this before betting it for real:** combining many favorites into a
+big multiplier does not create positive expected value. The vig compounds on
+every leg — reaching a ~100x payout typically takes 10+ legs, and even if
+every individual leg were priced perfectly fairly, that many legs multiplied
+together still lands on a clearly negative combined EV most of the time in
+practice, because real prices always carry some vig. The page shows the real
+naive and correlation-adjusted combined probability/EV, not a rosier number
+— treat it as a fun, structured longshot bet (the kind of parlay people
+build for the entertainment of a big potential payout), not a "the app found
+you free money" claim.
+
+Because player-prop odds cost API credits per lookup and this is the one
+place in the app that fetches them without you clicking anything, it's
+capped at `MAX_TREND_ODDS_CHECKS` (8) trend candidates per day, in
+`server/dailyParlay.js`.
 
 ## How the feedback loop works
 
@@ -182,7 +217,8 @@ browser (React)
    ├──► /api/parlay/combine ──► Express ──► pure odds math + correlation heuristic
    ├──► /api/bets, /api/bets/:id  ──► Express ──► data/bets.json
    ├──► /api/bets/:id/analyze ──► Express ──► ESPN (per-leg outcome lookup) ──► data/bets.json
-   └──► /api/calibration    ──► Express ──► aggregates graded legs from data/bets.json
+   ├──► /api/calibration     ──► Express ──► aggregates graded legs from data/bets.json
+   └──► /api/daily-parlay    ──► Express ──► edge feed + trend feed + bounded prop-odds checks ──► data/dailyParlay.json
 ```
 
 The Odds API key stays server-side (`.env`, never shipped to the browser) and
@@ -255,6 +291,7 @@ server/
   betlog.js                           Bet log CRUD + CLV
   postmortem.js                         Grades a settled bet's legs against what actually happened
   calibration.js                          Aggregates graded legs into real hit-rate buckets
+  dailyParlay.js                            Auto-builds one +10000 "favorites" longshot parlay per day
   weather.js                           Open-Meteo (NFL/MLB outdoor venues)
   stadiums.js                           NFL stadium coordinates + roof type
   parks.js                               MLB ballpark coordinates + roof type (no orientation/wind-direction claims — see caveats)
@@ -268,10 +305,11 @@ src/
     Games.jsx             Upcoming games grid (Elo, weather)
     GameDetail.jsx          Per-game odds table + injuries
     ParlaySlip.jsx            Slip, correlation warnings, bet logging
-    BetLog.jsx                  History, CLV, ROI, postmortem breakdown per bet
-    Calibration.jsx               Real hit-rate table across all graded bets
-    SportSwitcher.jsx               NFL/NBA/MLB toggle
-    Disclaimer.jsx                    Always-visible honesty banner
+    DailyParlay.jsx             Auto-built +10000 favorites parlay, add-all-to-slip
+    BetLog.jsx                    History, CLV, ROI, postmortem breakdown per bet
+    Calibration.jsx                 Real hit-rate table across all graded bets
+    SportSwitcher.jsx                 NFL/NBA/MLB toggle
+    Disclaimer.jsx                      Always-visible honesty banner
 ```
 
 ## Extending it

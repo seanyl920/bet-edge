@@ -8,6 +8,7 @@ import { requireSport, SPORTS } from "./sports.js";
 import { getUpcomingGames, getGameInjuries } from "./games.js";
 import { getEdgeFeed, getGameOddsTable } from "./edges.js";
 import { getTrendFeed, getTrendPropOdds } from "./trends.js";
+import { getDailyParlay } from "./dailyParlay.js";
 import { combineLegs } from "./parlay.js";
 import { addBet, betLogSummary, deleteBet, getBet, listBets, updateBet } from "./betlog.js";
 import { analyzeBet } from "./postmortem.js";
@@ -102,6 +103,20 @@ app.get(
       return res.status(400).json({ error: "eventId, player, and type query params are required" });
     }
     res.json(await getTrendPropOdds(sport, eventId, player, type));
+  })
+);
+
+app.get(
+  "/api/daily-parlay",
+  wrap(async (req, res) => {
+    res.json(await getDailyParlay());
+  })
+);
+
+app.post(
+  "/api/daily-parlay/regenerate",
+  wrap(async (req, res) => {
+    res.json(await getDailyParlay({ forceRegenerate: true }));
   })
 );
 
