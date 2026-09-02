@@ -91,6 +91,12 @@ function TrendCard({ trend, sport, onAddLeg }) {
         {trend.vsTeamNote && trend.type !== "vsTeamHistory" && (
           <div className="muted small">Also: {trend.vsTeamNote} (this-season sample — see README caveat)</div>
         )}
+        {trend.type === "pitcherK" && trend.daysRest != null && (
+          <div className="muted small">Days rest: {trend.daysRest}</div>
+        )}
+        {trend.type === "pitcherK" && trend.workloadNote && (
+          <div className="warning-note">⚠ {trend.workloadNote}</div>
+        )}
         {trend.park && (
           <div className="muted small">
             {trend.park.name}

@@ -47,6 +47,21 @@ const K_HOT_AVG_MIN = 7;
 // projected one.
 const UNCONFIRMED_LINEUP_PENALTY = 3;
 
+// A confirmed "starter" whose own boxscore position is "RP" rather than
+// "SP" is a real opener/bulk-reliever signal (confirmed live — see
+// getConfirmedLineup's comment in mlbData.js) — a K-streak built from real
+// starts is a much weaker signal for today's game if today's outing is
+// actually a 1-2 inning opener stint, not a normal 5-6 inning start. Larger
+// than UNCONFIRMED_LINEUP_PENALTY since the workload gap it reflects is
+// bigger (a truncated outing, not just "not yet confirmed at all").
+const OPENER_ROLE_PENALTY = 8;
+
+// MLB's standard rotation gap is 4-5 days between starts; noticeably less
+// is "short rest," a real, well-known workload signal — shown as a plain
+// fact (the actual day count), never folded into score as an invented
+// probability effect.
+const SHORT_REST_DAYS = 4;
+
 const PROP_MARKET = {
   hitStreak: "batter_hits",
   power: "batter_home_runs",
@@ -288,7 +303,11 @@ async function battingTrendsForTeam({ event, batterTeamId, batterTeamName, oppTe
   return trends;
 }
 
-async function pitcherKTrends({ event, pitcher, pitcherTeamName, oppTeamId, oppTeamName, park, weather }) {
+// Exported (only) so test/pitcherWorkload.test.js can exercise the days-rest
+// / opener-role math directly, with a stubbed fetch, instead of needing a
+// full live getTrendFeed() run — every other caller still goes through
+// buildTrends()/getTrendFeed().
+export async function pitcherKTrends({ event, pitcher, pitcherTeamName, oppTeamId, oppTeamName, park, weather, startingPitcherRole }) {
   if (!pitcher) return [];
   const [log, oppContext] = await Promise.all([
     getPitcherGameLog(pitcher.id),
@@ -302,6 +321,26 @@ async function pitcherKTrends({ event, pitcher, pitcherTeamName, oppTeamId, oppT
   const matchup = lineupMatchupLabel(oppContext.kRate);
 
   if (kStreak < K_STREAK_MIN && (avgK == null || avgK < K_HOT_AVG_MIN)) return [];
+
+  // Days since this pitcher's last start, computed from his own game log —
+  // no new data source needed. Null (not 0, not "on schedule") when there's
+  // no prior start to measure from, e.g. a season debut.
+  const lastStart = log[0]?.date ? new Date(log[0].date) : null;
+  const gameDate = new Date(event.date);
+  const daysRest =
+    lastStart && !Number.isNaN(lastStart.getTime()) ? Math.round((gameDate - lastStart) / (24 * 60 * 60 * 1000)) : null;
+
+  // Only trust the confirmed role if it's actually for THIS pitcher — a
+  // late scratch/substitution would mean the confirmed lineup's starter and
+  // the "probable" pitcher this trend was built from are two different
+  // people, and misattributing one's role to the other would be worse than
+  // just not knowing.
+  const role = startingPitcherRole?.id === String(pitcher.id) ? startingPitcherRole.role : null;
+  const isOpenerRole = role != null && role !== "SP";
+
+  const workloadNotes = [];
+  if (isOpenerRole) workloadNotes.push(`confirmed today's role is ${role}, not a traditional start — real strikeout opportunity is likely much lower`);
+  if (daysRest != null && daysRest < SHORT_REST_DAYS) workloadNotes.push(`pitching on ${daysRest} days rest (short for a starter)`);
 
   return [
     {
@@ -318,12 +357,15 @@ async function pitcherKTrends({ event, pitcher, pitcherTeamName, oppTeamId, oppT
       matchupLabel: matchup.label,
       park: park ? { name: park.name, note: park.note ?? null } : null,
       weather,
+      daysRest,
+      confirmedRole: role,
+      workloadNote: workloadNotes.length ? workloadNotes.join("; ") : null,
       headline:
         kStreak >= K_STREAK_MIN
           ? `${pitcher.name} has 6+ strikeouts in ${kStreak} straight starts`
           : `${pitcher.name} is averaging ${avgK.toFixed(1)} K over his last ${last5.length} starts`,
       streakValue: kStreak >= K_STREAK_MIN ? kStreak : Math.round(avgK),
-      score: (kStreak >= K_STREAK_MIN ? kStreak * 2 : Math.round(avgK)) + matchup.bonus,
+      score: (kStreak >= K_STREAK_MIN ? kStreak * 2 : Math.round(avgK)) + matchup.bonus - (isOpenerRole ? OPENER_ROLE_PENALTY : 0),
     },
   ];
 }
@@ -367,6 +409,7 @@ async function buildTrends(sport, hoursAhead) {
           oppTeamName: event.away.name,
           park,
           weather,
+          startingPitcherRole: lineup.home.startingPitcherRole,
         }),
         pitcherKTrends({
           event,
@@ -376,6 +419,7 @@ async function buildTrends(sport, hoursAhead) {
           oppTeamName: event.home.name,
           park,
           weather,
+          startingPitcherRole: lineup.away.startingPitcherRole,
         }),
       ]);
 

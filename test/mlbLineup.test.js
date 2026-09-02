@@ -53,7 +53,7 @@ const CONFIRMED_SUMMARY = {
               { starter: false, batOrder: null, athlete: { id: "88888", displayName: "Bench Guy" } },
             ],
           },
-          { athletes: [{ starter: true, batOrder: 0, athlete: { id: "42604", displayName: "Griffin Jax" } }] },
+          { athletes: [{ starter: true, batOrder: 0, athlete: { id: "42604", displayName: "Griffin Jax", position: { abbreviation: "SP" } } }] },
         ],
       },
     ],
@@ -96,6 +96,13 @@ test("getConfirmedLineup returns confirmed:true with real batting order once a l
   assert.equal(result.home.batters.length, 1);
   assert.equal(result.home.batters[0].name, "Yandy Diaz");
   assert.equal(result.home.batters[0].battingOrder, 1);
+
+  // The confirmed starter's own boxscore position is a real opener/bulk-
+  // reliever signal — Hagenman shows "RP" despite being the Mets' listed
+  // starter (this is the actual live-confirmed contrast the diagnostic
+  // caught: a traditional starter is "SP", an opener/bulk-reliever isn't).
+  assert.deepEqual(result.home.startingPitcherRole, { id: "42604", role: "SP" });
+  assert.deepEqual(result.away.startingPitcherRole, { id: "4991251", role: "RP" });
 });
 
 test("getConfirmedLineup excludes a non-starter present in the same boxscore category", async () => {
@@ -110,8 +117,10 @@ test("getConfirmedLineup returns confirmed:false and an EMPTY batters array — 
 
   assert.equal(result.home.confirmed, false);
   assert.deepEqual(result.home.batters, []);
+  assert.equal(result.home.startingPitcherRole, null);
   assert.equal(result.away.confirmed, false);
   assert.deepEqual(result.away.batters, []);
+  assert.equal(result.away.startingPitcherRole, null);
 });
 
 test("getConfirmedLineup never throws when the request fails", async () => {

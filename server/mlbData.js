@@ -141,6 +141,10 @@ export async function getTeamBatters(teamId) {
  * prevent. There is no explicit "official" flag in ESPN's response (no key
  * scan for one turned up anything); array-populated-or-not is the only
  * signal available, so that's what this relies on.
+ *
+ * Also returns `startingPitcherRole` per side — the confirmed starter's
+ * boxscore position ("SP" vs. "RP"), a real signal for an opener/bulk-
+ * reliever role, from the same response at the same confirmation moment.
  */
 export async function getConfirmedLineup(espnEventId) {
   try {
@@ -157,7 +161,10 @@ export async function getConfirmedLineup(espnEventId) {
       }
     }
 
-    const result = { home: { confirmed: false, batters: [] }, away: { confirmed: false, batters: [] } };
+    const result = {
+      home: { confirmed: false, batters: [], startingPitcherRole: null },
+      away: { confirmed: false, batters: [], startingPitcherRole: null },
+    };
     const boxPlayers = data?.boxscore?.players ?? [];
     for (const teamEntry of boxPlayers) {
       const ha = teamIdToHomeAway.get(String(teamEntry?.team?.id));
@@ -181,7 +188,22 @@ export async function getConfirmedLineup(espnEventId) {
         }))
         .sort((x, y) => x.battingOrder - y.battingOrder);
 
-      result[ha] = { confirmed: starters.length > 0, batters: starters };
+      // The starting pitcher's own boxscore entry (confirmed live, same
+      // response, same moment as the batting category above) carries a real
+      // defensive position — "Starting Pitcher"/"SP" for a traditional
+      // starter, but "Relief Pitcher"/"RP" was seen live for a probable
+      // pitcher used as an opener/bulk-reliever (a real distinction this
+      // project's own instructions asked for: "starter vs opener/bulk-
+      // reliever role"). Only trustworthy once posted, same as the lineup —
+      // `null` when nothing's posted yet, never guessed from the position
+      // this pitcher normally plays.
+      const pitchingCategory = (teamEntry?.statistics ?? []).find((s) => s !== battingCategory) ?? teamEntry?.statistics?.[1];
+      const pitcherEntry = (pitchingCategory?.athletes ?? []).find((a) => a?.starter === true);
+      const startingPitcherRole = pitcherEntry
+        ? { id: String(pitcherEntry.athlete?.id), role: pitcherEntry.athlete?.position?.abbreviation ?? null }
+        : null;
+
+      result[ha] = { confirmed: starters.length > 0, batters: starters, startingPitcherRole };
     }
 
     if (!result.home.confirmed && !result.away.confirmed) {
@@ -190,7 +212,10 @@ export async function getConfirmedLineup(espnEventId) {
     return result;
   } catch (err) {
     warn("getConfirmedLineup", `event ${espnEventId}: request failed — ${err.message}`);
-    return { home: { confirmed: false, batters: [] }, away: { confirmed: false, batters: [] } };
+    return {
+      home: { confirmed: false, batters: [], startingPitcherRole: null },
+      away: { confirmed: false, batters: [], startingPitcherRole: null },
+    };
   }
 }
 

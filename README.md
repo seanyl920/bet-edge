@@ -831,9 +831,22 @@ enough to mean something, and even then only against the specific
   number, and never hidden. There's no explicit "this lineup is official"
   flag in ESPN's response (checked, doesn't exist) — confirmed status is
   inferred from whether the array is populated at all, which is the only
-  signal available. Pitch counts, batters-faced, and days-rest were also
-  checked for in the same response and aren't there; workload beyond
-  lineup confirmation isn't built yet (see Extending it).
+  signal available. Pitch counts and batters-faced were checked for in the
+  same response and aren't there — still not built (see Extending it).
+- **Pitcher-K trends now show confirmed role and days rest.** The same
+  confirmed-boxscore signal that gives batting order also carries the
+  starter's own position — "SP" for a traditional start, "RP" was seen
+  live for a probable pitcher actually used as an opener/bulk-reliever.
+  When that role is confirmed (and actually matches the pitcher this trend
+  is about — never misattributed across a last-minute substitution), the
+  trend's score takes a real penalty and says why (`workloadNote`): a
+  K-streak built from full starts is a much weaker signal for a truncated
+  opener outing. Days rest is computed from `getPitcherGameLog()`'s own
+  start dates (no new source needed) and flagged when short (<4 days) —
+  shown as the plain fact, never turned into an invented probability
+  adjustment the way the opener-role penalty is. Both are `null`/absent
+  when there's nothing to compute from (no prior start logged, no
+  confirmed role yet) — never a guessed number.
 - **The trend feed does not claim to know which way the wind blows relative
   to any specific park.** MLB's official rule of thumb is that a park's
   home-plate-to-outfield line should run east-northeast, but real parks
@@ -998,6 +1011,7 @@ test/
   predictionLog.test.js    node:test coverage for predictionLog.js
   predictionEval.test.js     node:test coverage for predictionEval.js (analyzeBetFn stubbed — no live ESPN in this sandbox)
   mlbLineup.test.js            node:test coverage for getConfirmedLineup() (fetch stubbed with fixtures matching a real confirmed/unconfirmed live response)
+  pitcherWorkload.test.js      node:test coverage for pitcherKTrends' days-rest and opener-role math
 src/
   App.jsx           Tabs, sport switcher, slip state
   api.js             Frontend fetch wrappers
@@ -1016,14 +1030,15 @@ src/
 
 ## Extending it
 
-- **Pitcher workload data (pitch counts, batters faced, days rest,
-  starter-vs-opener role)**: `getConfirmedLineup()`'s diagnostic run also
-  checked `summary?event=`'s response for these and found none — no
-  pitch-count/batters-faced field, nothing rest-related. `getPitcherGameLog()`
-  already has each start's date, so days rest is at least computable from
-  consecutive log entries without a new endpoint; pitch count/opener-role
-  likely need a different ESPN endpoint (unverified) or a source like
-  Baseball Savant. Not built yet.
+- **Pitcher workload — pitch counts and batters faced are still not
+  built.** `getConfirmedLineup()`'s diagnostic run checked `summary?event=`'s
+  response for these and found neither field there; they likely need a
+  different ESPN endpoint (unverified) or a source like Baseball Savant.
+  Days rest and starter-vs-opener role, by contrast, ARE built now (see the
+  Trends section above) — days rest from `getPitcherGameLog()`'s own dates
+  (no new endpoint needed), role from the same confirmed-boxscore signal
+  `getConfirmedLineup()` uses for batting order (`startingPitcherRole`,
+  "SP" vs. "RP" — a real opener/bulk-reliever tell).
 - **Matchup-specific K/contact rates (Priority 2)**: confirmed opposing
   lineup's K rate vs. the starter's handedness, pitcher K/BB vs. LHB/RHB,
   swinging-strike/contact rates — needs Statcast-tier data ESPN's free API
