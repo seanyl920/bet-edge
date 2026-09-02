@@ -146,14 +146,14 @@ async function getParkWeather(sport, homeAbbreviation, isoDate) {
 
 async function battingTrendsForTeam({ event, batterTeamId, batterTeamName, oppTeamId, oppTeamName, oppPitcher, park, weather }) {
   const batters = await getTeamBatters(batterTeamId);
-  // ERA comes from getProbablePitchers (pulled from a confirmed-working
-  // pregame boxscore). This used to also call getPitcherSeasonStats (the
+  // ERA and WHIP both come from getProbablePitchers now (its `probables`
+  // field carries season stats directly — see mlbData.js's Known-issue
+  // history note). This used to also call getPitcherSeasonStats (the
   // separate, never-verified /overview endpoint) for WHIP/K9 — dropped: in
-  // every live run this app has seen, that call consistently returned
-  // nulls (every trend card showed "WHIP —"), so it was a wasted fetch per
-  // game for two fields that never once had real data. era is not used in
-  // scoring, so its absence here doesn't change anything but display.
-  const pitcherStats = { era: oppPitcher?.era ?? null, whip: null, k9: null };
+  // every live run this app had seen at the time, that call consistently
+  // returned nulls. k9 still has no real source. Neither era nor whip is
+  // used in scoring, so their absence wouldn't change anything but display.
+  const pitcherStats = { era: oppPitcher?.era ?? null, whip: oppPitcher?.whip ?? null, k9: null };
   const matchup = pitcherMatchupLabel(pitcherStats.era);
 
   const trends = [];

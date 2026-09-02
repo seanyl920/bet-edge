@@ -236,6 +236,48 @@ against a running instance confirming the CORS header and the stripped
   different trend types for the same player and game (e.g. a hit streak
   and a power trend together) still both show, since those aren't the same
   stale-number problem.
+- **Probable-pitcher lookup broke entirely — every game showed "unknown"
+  matchup context.** `getProbablePitchers()` read the starting pitcher out
+  of the pregame boxscore's "pitching" stat category — confirmed working
+  when originally built, but a live check in September 2026 showed every
+  team's boxscore category present with 0 athletes for games still hours
+  from first pitch (ESPN evidently stopped populating that pregame, or
+  moved when it does). Re-diagnosed live: there's now a dedicated
+  `header.competitions[0].competitors[*].probables[0]` field that *is*
+  populated this early, and it carries `homeAway` directly (no more
+  cross-referencing `data.rosters`) plus the starter's season ERA *and*
+  WHIP right there — an upgrade over the old source, which never had WHIP
+  at all (every trend card showed "WHIP —", see the entry below this one).
+  Fixed: `getProbablePitchers()` rewritten around the new field; verified
+  against the exact live shape (a mocked payload matching the diagnostic
+  output) plus empty/missing-data edge cases.
+- **A wall of "no statistics categories found" warnings looked like the
+  batter-gamelog endpoint was broken. It wasn't.** Live diagnostics on 5 of
+  the players actually triggering the warning (across 5 different teams)
+  showed a clear, boring explanation: 2 had a real gamelog for 2025 but
+  nothing yet in 2026 (hadn't been called up this season), and the other 3
+  were literally every team's lowest-usage roster spot — a third-string
+  catcher — with nothing in *either* season. `getTeamBatters()` lists the
+  *whole* roster, not just regulars, and September 1's roster expansion had
+  just added a batch of players with little-to-no MLB time right before
+  this was reported — so the underlying data was correct, only the log
+  message was misleading (it reads like an error for what's actually a
+  routine "this player hasn't played" case). Fixed: `parseGameLog()` now
+  distinguishes the confirmed "genuinely zero games" response shape
+  (exactly `{filters: [...]}`, nothing else) from a truly unexpected one —
+  only the latter still warns. Verified against both shapes plus a fully
+  empty `{}` response (caught in my own test: an early version of this fix
+  would have silently swallowed *that* case too, which should still warn —
+  a response with literally nothing in it is a real failure signal, not
+  the confirmed "no games" shape).
+
+All three above found via live diagnostic scripts run on the user's own
+machine (this app's sandbox has no outbound network access to ESPN) after
+the user reported a wall of `[mlbData]` warnings in their server terminal —
+six rounds of "run this script, paste the output" to trace the real current
+shape of two ESPN endpoints before writing a single line of fix, the same
+process this project has used for every ESPN reverse-engineering problem
+from the start.
 
 ## Daily longshot parlay
 

@@ -41,45 +41,45 @@ export async function getProbablePitchers(espnEventId) {
     try {
       const data = await getJson(`${SITE_BASE}/summary?event=${espnEventId}`);
 
-      // Confirmed against a live pregame response: there's no dedicated
-      // "probables" field on this endpoint at all (the earlier guess). The
-      // starting pitcher is the sole entry in each team's boxscore "pitching"
-      // stat category (flagged `starter: true`) — boxscore is populated with
-      // the starting lineup before first pitch, not just after. `data.rosters`
-      // carries the home/away flag per team id, which boxscore.players itself
-      // doesn't, so cross-reference the two.
-      const homeAwayByTeamId = {};
-      for (const r of data?.rosters ?? []) {
-        if (r?.team?.id && r?.homeAway) homeAwayByTeamId[r.team.id] = r.homeAway;
-      }
-
+      // Was: read the starter out of the pregame boxscore's "pitching" stat
+      // category (`starter: true` flag), cross-referenced against
+      // `data.rosters` for the home/away flag. That broke — live checks in
+      // September 2026 showed every team's boxscore categories present but
+      // with 0 athletes, for games still hours from first pitch (lineups
+      // evidently post later than they used to, or ESPN stopped populating
+      // this pregame). Re-diagnosed live: there's now a dedicated
+      // `header.competitions[0].competitors[*].probables[0]` field, which
+      // *is* populated this early, and it carries `homeAway` directly (no
+      // more cross-referencing `data.rosters`) plus the starter's season
+      // ERA *and* WHIP right there in `statistics.splits.categories` — an
+      // upgrade over the old source, which never had WHIP at all (see
+      // README's Known-issue history for the pitcher-stats endpoint this
+      // replaces the dropped call to).
+      const competitors = data?.header?.competitions?.[0]?.competitors ?? [];
       const result = { home: null, away: null };
-      for (const teamBlock of data?.boxscore?.players ?? []) {
-        const ha = homeAwayByTeamId[teamBlock?.team?.id];
-        if (!ha) continue;
-        const pitching = (teamBlock.statistics ?? []).find((c) => String(c.type).toLowerCase().includes("pitch"));
-        const starter = pitching?.athletes?.find((a) => a.starter) ?? pitching?.athletes?.[0];
-        const athlete = starter?.athlete;
+      for (const c of competitors) {
+        const ha = c?.homeAway;
+        if (ha !== "home" && ha !== "away") continue;
+        const probable = c?.probables?.[0];
+        const athlete = probable?.athlete;
         if (!athlete?.id) continue;
-        // Bonus find from the same diagnostic: this pregame boxscore already
-        // carries the starter's season ERA (everything else in the row is a
-        // "--" placeholder pregame, but ERA is season-cumulative, not
-        // per-game). Grab it here rather than relying on the separate
-        // /athletes/:id/overview endpoint, whose shape isn't confirmed.
-        const eraIdx = (pitching?.names ?? []).findIndex((n) => String(n).toUpperCase() === "ERA");
-        const eraRaw = eraIdx !== -1 ? starter.stats?.[eraIdx] : null;
-        const era = eraRaw != null && eraRaw !== "--" ? Number(eraRaw) : null;
+        const categories = probable?.statistics?.splits?.categories ?? [];
+        const statValue = (name) => {
+          const v = categories.find((cc) => String(cc.name).toUpperCase() === name)?.value;
+          return Number.isFinite(v) ? v : null;
+        };
         result[ha] = {
           id: String(athlete.id),
           name: athlete.displayName ?? athlete.fullName ?? athlete.shortName ?? "Unknown",
-          era: Number.isFinite(era) ? era : null,
+          era: statValue("ERA"),
+          whip: statValue("WHIP"),
         };
       }
 
       if (!result.home && !result.away) {
         warn(
           "getProbablePitchers",
-          `event ${espnEventId}: no starter parsed out of boxscore.players. Team ids seen: ${(data?.boxscore?.players ?? []).map((t) => t?.team?.id).join(",")}, rosters homeAway map: ${JSON.stringify(homeAwayByTeamId)}`
+          `event ${espnEventId}: no probables found. Competitor homeAway values seen: ${competitors.map((c) => c?.homeAway).join(",")}`
         );
       }
       return result;
@@ -131,7 +131,23 @@ function parseGameLog(data, statAliases, debugLabel, presenceAliases) {
   const sharedNames = data?.labels ?? data?.names;
 
   if (!Array.isArray(categories) || categories.length === 0) {
-    warn(debugLabel, `no statistics categories found. Top-level keys: ${Object.keys(data ?? {}).join(", ")}`);
+    // Confirmed live (Sept 2026, across 5 different players on 5 different
+    // teams): a response with ONLY a `filters` key — no `events`,
+    // `seasonTypes`, or `statistics` at all — means this player genuinely
+    // has zero games logged for the requested season, not a parse failure.
+    // Two of the five had a real prior-season log but nothing yet this
+    // season (hadn't been called up); the other three were every team's
+    // lowest-usage roster spot, a third catcher, with nothing in either
+    // season. getTeamBatters() lists the *whole* roster, not just regulars
+    // — especially right after the September roster expansion pulls in a
+    // batch of players with little or no MLB time — so this is routine,
+    // not a bug, and not worth a warning. An actually-unexpected shape
+    // (other keys present, still no categories) still gets one, since that
+    // *would* indicate something worth investigating.
+    const onlyFilters = Array.isArray(data?.filters) && Object.keys(data).length === 1;
+    if (!onlyFilters) {
+      warn(debugLabel, `no statistics categories found. Top-level keys: ${Object.keys(data ?? {}).join(", ")}`);
+    }
     return [];
   }
   if (!Array.isArray(sharedNames)) {
