@@ -4,6 +4,7 @@ import { getGameWeather, weatherImpactNote } from "./weather.js";
 import { NFL_STADIUMS } from "./stadiums.js";
 import { MLB_PARKS } from "./parks.js";
 import { round } from "./oddsMath.js";
+import { getMlbGameContext } from "./mlbGameContext.js";
 
 function venueTable(sportKey) {
   return sportKey === "mlb" ? MLB_PARKS : sportKey === "nfl" ? NFL_STADIUMS : null;
@@ -38,6 +39,19 @@ export async function getUpcomingGames(sport) {
         }
       }
 
+      // MLB-only, display-only starting-pitcher/lineup context — see
+      // mlbGameContext.js for why this never touches `model` above (no
+      // verified formula exists yet to fold it into a win probability).
+      // Never lets a context-fetch failure break the games list.
+      let mlbContext = null;
+      if (sport.key === "mlb") {
+        try {
+          mlbContext = await getMlbGameContext(ev.id);
+        } catch (err) {
+          console.warn(`[games] getMlbGameContext failed for event ${ev.id} (non-fatal): ${err.message}`);
+        }
+      }
+
       return {
         id: ev.id,
         date: ev.date,
@@ -52,6 +66,7 @@ export async function getUpcomingGames(sport) {
           sampleSize: prediction.sampleSize,
         },
         weather,
+        mlbContext,
       };
     })
   );

@@ -14,6 +14,7 @@ import { getOdds } from "./oddsApi.js";
 import { matchEspnEvent } from "./teamMatch.js";
 import { coverProbability } from "./elo.js";
 import { recordPrediction } from "./predictionLog.js";
+import { getMlbGameContext } from "./mlbGameContext.js";
 import {
   americanToDecimal,
   devigMultiplicative,
@@ -243,6 +244,18 @@ export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
     const { home: h2hHome, away: h2hAway } = h2hPrices(oddsEvent);
     const ml = consensusAndBest(h2hHome, h2hAway);
 
+    // MLB-only, display-only starting-pitcher/lineup context (see
+    // mlbGameContext.js's header for why this never touches modelHomeWinProb
+    // — no verified formula exists yet to convert it into one). Never lets
+    // a context-fetch failure break the actual edge feed.
+    const mlbContext =
+      sport.key === "mlb"
+        ? await getMlbGameContext(event.id).catch((err) => {
+            console.warn(`[edges] getMlbGameContext failed for event ${event.id} (non-fatal): ${err.message}`);
+            return null;
+          })
+        : null;
+
     games.push({
       eventId: event.id,
       commenceTime: event.date,
@@ -253,6 +266,7 @@ export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
       modelHomeWinProb: round(prediction.homeWinProb),
       sampleSize: prediction.sampleSize,
       numBooks: ml.numBooks,
+      mlbContext,
     });
 
     if (!trustworthy) continue;

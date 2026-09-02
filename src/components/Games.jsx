@@ -44,6 +44,20 @@ export default function Games({ sport, onSelectGame }) {
               <span className="muted small">{g.model.sampleSize} games sampled</span>
             </div>
             {g.weather && <div className="muted small">🌤 {g.weather.note}</div>}
+            {g.mlbContext && (
+              <div className="muted small mlb-context">
+                {[g.mlbContext.away, g.mlbContext.home].map((side, i) =>
+                  side.pitcher ? (
+                    <div key={i}>
+                      {side.pitcher.name}
+                      {side.pitcher.confirmedRole && side.pitcher.confirmedRole !== "SP" ? ` (${side.pitcher.confirmedRole})` : ""}:
+                      {" "}K-BB% {side.pitcher.kMinusBBPercent ?? "—"}
+                      {!side.lineupConfirmed ? " · lineup not confirmed yet" : ""}
+                    </div>
+                  ) : null
+                )}
+              </div>
+            )}
           </button>
         ))}
       </div>

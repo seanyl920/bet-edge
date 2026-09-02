@@ -875,6 +875,28 @@ enough to mean something, and even then only against the specific
      exact-line probability. Building that outcome distribution honestly
      (combining opportunity with per-opportunity ability, per this
      project's own requirement) is Priority 3 work, not done yet.
+- **MLB game predictions (moneyline/spread) still come from Elo alone —
+  starting-pitcher/lineup context is now shown, but deliberately doesn't
+  touch the actual probability.** `server/mlbGameContext.js` attaches
+  each probable starter's confirmed role, days-rest-computable last-start
+  date, and K-BB% (from Savant) to every MLB game on the Games tab and in
+  the edge feed's game list — real, verified data, the same "context, not
+  a probability" treatment Savant's player-level stats got above. It was
+  NOT folded into `modelHomeWinProb`/EV/Kelly, on purpose: doing that
+  honestly needs either a verified sabermetric formula (a real FIP/SIERA
+  constant, a WAR-to-win-probability conversion) checked against a live
+  source, or enough of this app's own graded prediction history to fit the
+  relationship empirically — and neither exists yet. This sandbox has no
+  outbound web access to verify a formula against (confirmed repeatedly
+  throughout this project), and `predictionLog.js` has essentially no
+  volume yet. Inventing a plausible-looking conversion without either
+  would be exactly the fabricated-precision problem this project's own
+  instructions warn against — so the Elo-based `modelHomeWinProb` you'd
+  actually size a bet against is untouched by any of this. Bullpen
+  quality/availability and park-adjusted scoring are NOT built at all —
+  no verified data source for recent bullpen usage exists in this app, and
+  hardcoding remembered park-factor numbers without a live source to check
+  them against would be the same problem.
 - **The trend feed does not claim to know which way the wind blows relative
   to any specific park.** MLB's official rule of thumb is that a park's
   home-plate-to-outfield line should run east-northeast, but real parks
@@ -940,7 +962,7 @@ enough to mean something, and even then only against the specific
 ```
 browser (React)
    │
-   ├──► /api/:sport/games   ──► Express ──► ESPN + Open-Meteo (weather) + Elo engine
+   ├──► /api/:sport/games   ──► Express ──► ESPN + Open-Meteo (weather) + Elo engine + (MLB) mlbGameContext.js — context only, never modelHomeWinProb
    ├──► /api/:sport/edges   ──► Express ──► ESPN + Elo engine + The Odds API (odds, cached)
    ├──► /api/mlb/trends     ──► Express ──► ESPN (probables/rosters/gamelogs) + Open-Meteo
    ├──► /api/mlb/trends/prop-odds ─► Express ──► The Odds API (on-demand, per click only)
@@ -1018,6 +1040,7 @@ server/
   espn.js               ESPN client: teams, scoreboard, schedules, injuries
   mlbData.js             MLB-specific ESPN calls: probables, CONFIRMED starting lineups, rosters, gamelogs, pitcher/team stats
   savantData.js           Baseball Savant custom-leaderboard CSV: season K%/BB%/whiff%/barrel-rate, name-matched (no shared id with ESPN)
+  mlbGameContext.js       MLB game-level context (SP role/K-BB%, lineup status) for Games tab + edge feed — display only, never modelHomeWinProb
   statFind.js              Defensive deep-search helpers for ESPN's loosely-shaped stat blobs
   streaks.js                Pure streak/rate math over a normalized game log
   trends.js                   Builds the MLB trend feed: streaks + matchup + weather + Savant context + heuristic score
@@ -1041,6 +1064,7 @@ test/
   predictionLog.test.js    node:test coverage for predictionLog.js
   predictionEval.test.js     node:test coverage for predictionEval.js (analyzeBetFn stubbed — no live ESPN in this sandbox)
   mlbLineup.test.js            node:test coverage for getConfirmedLineup() (fetch stubbed with fixtures matching a real confirmed/unconfirmed live response)
+  mlbGameContext.test.js       node:test coverage for getMlbGameContext()'s composition of the above (right side gets right pitcher/role/K-BB%, never throws)
   pitcherWorkload.test.js      node:test coverage for pitcherKTrends' days-rest and opener-role math
   savantData.test.js           node:test coverage for savantData.js, using REAL CSV rows pasted from a live Savant response this session
 src/
@@ -1086,6 +1110,23 @@ src/
   (projected PA/BF) combined with per-opportunity ability (K%) into a real
   outcome distribution, rather than one number standing in for a
   probability, is explicitly Priority 3 scope.
+- **Folding starting-pitcher quality (or anything else in
+  `mlbGameContext.js`) into `modelHomeWinProb` (Priority 3, the biggest
+  remaining piece)**: real blocker, not a to-do-later — see Honesty &
+  limits above. Two honest paths forward: (1) verify a real sabermetric
+  formula/constant against a live source (needs actual internet access
+  this sandbox doesn't have — a person with a browser could do this in
+  minutes); or (2) let `predictionLog.js`/`predictionEval.js` accumulate
+  enough real graded volume to fit the relationship from this app's own
+  data instead of borrowing someone else's constant. Either way, per this
+  project's own instruction #8: build it as a candidate `modelVersion`
+  logged and evaluated alongside the current Elo-only one, and don't call
+  it "better" or swap it into live EV/Kelly until the evaluation actually
+  shows that.
+- **Bullpen quality/availability, park-adjusted scoring (Priority 3)**: not
+  built at all — no verified data source for recent bullpen usage exists
+  in this app yet, and this project won't hardcode remembered park-factor
+  numbers without a live source to check them against.
 - **Add a league to the edge feed**: add one entry to `server/sports.js`
   (Elo constants + ESPN/Odds API sport keys); ESPN's site API and The Odds
   API both cover NHL and most major soccer leagues with the same URL shape.
