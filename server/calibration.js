@@ -42,6 +42,23 @@ function edgeKey(sport, market, prob) {
   return `edge:${sport}:${market}:${probDecileLabel(prob)}`;
 }
 
+// Confirmed real bug: the score-bucketed key above is fine for RANKING a
+// trend before any specific line is known (that's all trends.js's ranking
+// step has to go on), but dailyParlay.js and TrendFeed.jsx were also using
+// that same score-bucketed rate as the actual probability priced against a
+// SPECIFIC prop line — and score has nothing to do with the threshold. 15
+// graded "Over 2.5 K" bets and a completely different "Over 8.5 K" line
+// could land in the same score band and share a rate, overriding that
+// line's real ~18.9% market-implied probability with an unrelated bucket's
+// 100%. A specific bet's real identity is (sport, trend type, side,
+// threshold) — not score — so pricing needs its own key keyed on the
+// threshold instead, kept separate from the ranking bucket above.
+function trendPointKey(sport, trendType, side, point) {
+  const sideKey = side ? String(side).toLowerCase() : "unknown";
+  const pointKey = point != null ? String(point) : "unknown";
+  return `trendpoint:${sport}:${trendType}:${sideKey}:${pointKey}`;
+}
+
 /** Rebuilds the full calibration table from every graded bet in the log. */
 export async function getCalibration() {
   const bets = await listBets();
@@ -55,21 +72,36 @@ export async function getCalibration() {
 
       const ctx = leg.context ?? {};
       const sport = leg.sport ?? bet.sport;
-      let key, label;
+      const keys = []; // a leg can bump more than one bucket (ranking + pricing, for a trend leg)
       if (ctx.kind === "trend") {
-        key = trendKey(sport, ctx.trendType, ctx.propSide, ctx.score);
-        label = `${String(sport).toUpperCase()} ${ctx.trendType} ${ctx.propSide ?? ""} · score ${scoreBucketLabel(ctx.score)}`;
+        keys.push([
+          trendKey(sport, ctx.trendType, ctx.propSide, ctx.score),
+          `${String(sport).toUpperCase()} ${ctx.trendType} ${ctx.propSide ?? ""} · score ${scoreBucketLabel(ctx.score)}`,
+        ]);
+        // Only bump the point-specific pricing bucket when the graded leg
+        // actually has a point — an older bet or a non-prop trend leg
+        // might not.
+        if (ctx.propPoint != null) {
+          keys.push([
+            trendPointKey(sport, ctx.trendType, ctx.propSide, ctx.propPoint),
+            `${String(sport).toUpperCase()} ${ctx.trendType} ${ctx.propSide ?? ""} ${ctx.propPoint}`,
+          ]);
+        }
       } else if (ctx.kind === "edge") {
-        key = edgeKey(sport, leg.market, ctx.modelProb);
-        label = `${String(sport).toUpperCase()} ${leg.market} · model ${probDecileLabel(ctx.modelProb)}`;
+        keys.push([
+          edgeKey(sport, leg.market, ctx.modelProb),
+          `${String(sport).toUpperCase()} ${leg.market} · model ${probDecileLabel(ctx.modelProb)}`,
+        ]);
       } else {
         return;
       }
 
-      const bucket = buckets.get(key) ?? { key, label, n: 0, hits: 0 };
-      bucket.n += 1;
-      if (result.hit) bucket.hits += 1;
-      buckets.set(key, bucket);
+      for (const [key, label] of keys) {
+        const bucket = buckets.get(key) ?? { key, label, n: 0, hits: 0 };
+        bucket.n += 1;
+        if (result.hit) bucket.hits += 1;
+        buckets.set(key, bucket);
+      }
     });
   }
 
@@ -84,9 +116,17 @@ export async function getCalibration() {
   return { minSample: MIN_SAMPLE, buckets: table };
 }
 
-/** Look up a calibrated rate for one trend, given an already-fetched calibration table (avoids recomputing per trend). */
+/** Look up a calibrated rate for one trend, given an already-fetched calibration table (avoids recomputing per trend). Score-bucketed — for RANKING a trend before any specific line is chosen, never for pricing a specific bet (see lookupTrendPointCalibration for that). */
 export function lookupTrendCalibration(buckets, sport, trendType, side, score) {
   const key = trendKey(sport, trendType, side, score);
+  const bucket = buckets.find((b) => b.key === key);
+  if (!bucket || !bucket.calibrated) return null;
+  return { rate: bucket.hitRatePct / 100, n: bucket.n };
+}
+
+/** Look up a calibrated rate for one SPECIFIC prop line (sport, trend type, side, threshold) — the real identity of a bet, for pricing it, not the coarser score-bucketed rate above. */
+export function lookupTrendPointCalibration(buckets, sport, trendType, side, point) {
+  const key = trendPointKey(sport, trendType, side, point);
   const bucket = buckets.find((b) => b.key === key);
   if (!bucket || !bucket.calibrated) return null;
   return { rate: bucket.hitRatePct / 100, n: bucket.n };

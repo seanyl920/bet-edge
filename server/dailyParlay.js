@@ -186,31 +186,44 @@ async function trendCandidates() {
   const out = [];
   for (const t of trends.slice(0, MAX_TREND_ODDS_CHECKS)) {
     try {
-      const { available, outcomes } = await getTrendPropOdds(sport, t.eventId, t.player.name, t.type);
-      if (!available) break; // no key configured — no point checking the rest
+      const { available, reason, outcomes } = await getTrendPropOdds(sport, t.eventId, t.player.name, t.type);
+      if (!available) {
+        // Confirmed real bug: `available: false` almost always means "this
+        // one trend's game didn't match an odds event" (a normal, expected
+        // thing — most games won't have odds posted for every player prop
+        // every time), not "no API key." Treating every miss as "stop
+        // checking everything else" meant one unmatched candidate could
+        // silently prevent every remaining candidate from ever being
+        // checked. Only actually stop on the real no-key case.
+        if (reason === "no-key") break;
+        continue;
+      }
       // "Over" is the natural side for every trend type this app builds
       // (continue the hit/RBI/HR streak, or clear the strikeout bar).
-      const overs = outcomes.filter((o) => o.side === "Over");
-      if (overs.length === 0) continue;
-      const best = overs.reduce((b, o) => (!b || americanToDecimal(o.price) > americanToDecimal(b.price) ? o : b), null);
-
-      // trueProb priority: (1) this app's own calibrated hit rate for this
-      // trend's bucket, when one exists — a real empirical rate from graded
-      // outcomes, not a market number at all, and literally this app's
-      // whole thesis; (2) the devigged probability trends.js already
-      // attached to `best` itself (getTrendPropOdds()'s attachDevigProbs —
-      // scoped to `best`'s own point specifically, never averaged across
-      // other points, which was a confirmed real bug: picking the
-      // highest-paying Over across every point but pricing it against a
-      // probability averaged across every point too, e.g. an Over 1.5 leg
-      // getting a probability that was really half Over-0.5-market); (3) if
-      // neither is available, skip this leg rather than fake a probability
-      // from the single vigged price it's also priced at —
-      // expectedValue(1/decimalOdds, decimalOdds) is always exactly 0 by
-      // construction, which is why every past daily parlay's reported EV
-      // came back at 0.0% regardless of the actual legs chosen.
-      const trueProb = t.calibration?.rate ?? best.trueProb;
-      if (trueProb == null) continue;
+      //
+      // Confirmed real bug: `best` used to be chosen by price ALONE, across
+      // every point mixed together, before checking whether it was even a
+      // favorite — so a longshot point (e.g. Over 8.5 K at a real ~19%)
+      // could beat out a genuine favorite point on the very same player
+      // (e.g. Over 2.5 K at ~69%) just for paying more, then get rejected
+      // by the MIN_LEG_PROB floor in build() — discarding this trend
+      // entirely even though a real favorite was sitting right there.
+      // Restrict to eligible (favorite) points FIRST, then compare price
+      // only among those — never let an ineligible longshot point knock out
+      // an eligible one just because it pays more.
+      //
+      // trueProb here is whatever getTrendPropOdds() already attached to
+      // this specific outcome — this app's own calibrated rate for this
+      // EXACT line when one exists (never the score-bucketed ranking rate,
+      // which has nothing to do with which threshold was actually bet —
+      // see calibration.js's lookupTrendPointCalibration), else a devigged
+      // probability scoped to this exact point, never averaged across
+      // other points. A leg with neither never reaches this array at all —
+      // see attachDevigProbs/getTrendPropOdds in trends.js.
+      const eligibleOvers = outcomes.filter((o) => o.side === "Over" && o.trueProb != null && o.trueProb >= MIN_LEG_PROB);
+      if (eligibleOvers.length === 0) continue;
+      const best = eligibleOvers.reduce((b, o) => (!b || americanToDecimal(o.price) > americanToDecimal(b.price) ? o : b), null);
+      const trueProb = best.trueProb;
 
       out.push({
         source: "trend",
@@ -225,12 +238,12 @@ async function trendCandidates() {
         selection: `Over ${best.point}`,
         americanOdds: best.price,
         trueProb,
-        probSource: t.calibration?.rate != null ? "calibration" : "devig",
+        probSource: best.probSource ?? "devig",
         decimalOdds: americanToDecimal(best.price),
         reason:
-          t.calibration?.rate != null
-            ? `${t.headline} — this app has graded ${t.calibration.n} similar legs at a real ${pctStr(t.calibration.rate)} hit rate.`
-            : `${t.headline}${t.matchupLabel && t.matchupLabel !== "unknown" ? ` — ${t.matchupLabel}` : ""} (priced off the devigged prop line, not this app's own model — not enough graded history yet for this bucket).`,
+          best.probSource === "calibration"
+            ? `${t.headline} — this app has graded ${best.calibrationN} bet(s) on this exact line at a real ${pctStr(trueProb)} hit rate.`
+            : `${t.headline}${t.matchupLabel && t.matchupLabel !== "unknown" ? ` — ${t.matchupLabel}` : ""} (priced off the devigged prop line for this exact line — not enough graded history yet for it).`,
         // Same shape TrendFeed.jsx attaches when a user manually adds this
         // exact kind of leg — see the matching comment on the edge-leg push
         // above for why this matters for grading.

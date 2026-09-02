@@ -20,10 +20,30 @@ export default function ParlaySlip({ legs, onRemove, onClear, onLogged }) {
       setCombined(null);
       return;
     }
+    // Confirmed real bug: with no request-ordering guard, adding a leg
+    // quickly (e.g. 2 legs -> 3 legs) fires two overlapping combine
+    // requests, and if the older (2-leg) response happened to arrive after
+    // the newer (3-leg) one, setCombined would silently overwrite the
+    // current, correct price with the stale one — and "Log this bet" had
+    // no way to know that had happened. Reproduced exactly that: a 3-leg
+    // slip logged at the 2-leg price. Fixed with the standard
+    // stale-response guard (clear `combined` immediately so nothing stale
+    // can be logged while the new price is in flight, and ignore a
+    // response that arrives after this effect has already been superseded).
+    let cancelled = false;
+    setCombined(null);
+    setError(null);
     api
       .combineParlay(legs)
-      .then(setCombined)
-      .catch((err) => setError(err.message));
+      .then((result) => {
+        if (!cancelled) setCombined(result);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [legs]);
 
   async function logBet() {
@@ -130,9 +150,21 @@ export default function ParlaySlip({ legs, onRemove, onClear, onLogged }) {
         <input type="number" min="0" value={stake} onChange={(e) => setStake(Number(e.target.value))} />
       </label>
 
-      <button className="primary" disabled={logging} onClick={logBet}>
-        {logging ? "Logging…" : "Log this bet"}
-      </button>
+      {(() => {
+        // Confirmed real bug: this button was only ever disabled while
+        // actively submitting — not while the combined price was still
+        // being recalculated for the current legs (or had failed to). A
+        // 2+ leg slip with no `combined` yet (still loading, or the fetch
+        // errored) could still be logged, using `combined`'s stale/absent
+        // fields. Block logging until the price actually matches what's on
+        // screen.
+        const priceStale = legs.length >= 2 && !combined && !error;
+        return (
+          <button className="primary" disabled={logging || priceStale} onClick={logBet}>
+            {logging ? "Logging…" : priceStale ? "Calculating…" : "Log this bet"}
+          </button>
+        );
+      })()}
     </div>
   );
 }

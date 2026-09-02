@@ -118,6 +118,17 @@ export default function DailyParlay({ onAddLeg }) {
               </div>
             )}
             {data.note && <p className="warning-note">⚠ {data.note}</p>}
+            {/* Confirmed real gap: the server always computes correlationWarnings
+                (e.g. same-game legs whose correlation direction isn't provable —
+                no exact adjustment applies, but the naive number could be off in
+                either direction), and ParlaySlip.jsx renders them — this screen
+                silently didn't, so a real warning the server generated was
+                simply invisible here. */}
+            {data.combined.correlationWarnings?.map((w, i) => (
+              <p className="warning-note" key={i}>
+                ⚠ {w}
+              </p>
+            ))}
           </div>
 
           <table className="edge-table">

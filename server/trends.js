@@ -20,9 +20,9 @@ import { getProbablePitchers, getTeamBatters, getBatterGameLog, getPitcherGameLo
 import { consecutiveStreak, countInLastN, vsTeamSplit } from "./streaks.js";
 import { getGameWeather, weatherImpactNote } from "./weather.js";
 import { MLB_PARKS } from "./parks.js";
-import { getOdds, getPlayerProps } from "./oddsApi.js";
+import { getOdds, getPlayerProps, hasOddsApiKey } from "./oddsApi.js";
 import { matchEspnEvent } from "./teamMatch.js";
-import { getCalibration, lookupTrendCalibration } from "./calibration.js";
+import { getCalibration, lookupTrendCalibration, lookupTrendPointCalibration } from "./calibration.js";
 import { localDateKey } from "./dateUtil.js";
 import { cached } from "./cache.js";
 import { americanToDecimal, devigMultiplicative } from "./oddsMath.js";
@@ -109,16 +109,15 @@ function lineupMatchupLabel(teamKRate) {
   return { label: "tough matchup — low-strikeout lineup", bonus: -1 };
 }
 
-async function gamesInWindow(sport, hoursAhead) {
-  // getScoreboard(sport) with no dates param returns only ESPN's default
-  // "today" window (confirmed by every live test this app has seen) — so
-  // hoursAhead was silently a no-op past ~24h, never actually reaching
-  // tomorrow's slate. Fetch today's and tomorrow's dates explicitly and
-  // merge; that covers the full range a 36h-default window can reach
-  // without depending on an unverified multi-day `dates=` range syntax
-  // (single-day queries are the pattern already confirmed working
-  // elsewhere in this app, e.g. postmortem.js's grading). If hoursAhead is
-  // ever pushed past ~48h this would need a third day added.
+// getScoreboard(sport) with no dates param returns only ESPN's default
+// "today" window (confirmed by every live test this app has seen). Fetch
+// today's and tomorrow's dates explicitly and merge; that covers the full
+// range a 36h trend window can reach without depending on an unverified
+// multi-day `dates=` range syntax (single-day queries are the pattern
+// already confirmed working elsewhere in this app, e.g. postmortem.js's
+// grading). If this ever needs to look further than 48h out, a third day
+// would need adding.
+async function todayAndTomorrowScoreboard(sport) {
   const todayParam = localDateKey().replace(/-/g, "");
   const tomorrowParam = localDateKey(new Date(Date.now() + 24 * 60 * 60 * 1000)).replace(/-/g, "");
   const [today, tomorrow] = await Promise.all([
@@ -127,10 +126,14 @@ async function gamesInWindow(sport, hoursAhead) {
   ]);
   const byId = new Map();
   for (const e of [...today, ...tomorrow]) byId.set(e.id, e);
+  return [...byId.values()];
+}
 
+async function gamesInWindow(sport, hoursAhead) {
+  const merged = await todayAndTomorrowScoreboard(sport);
   const now = Date.now();
   const cutoff = now + hoursAhead * 60 * 60 * 1000;
-  return [...byId.values()].filter((e) => {
+  return merged.filter((e) => {
     if (e.statusName !== "STATUS_SCHEDULED") return false;
     const t = new Date(e.date).getTime();
     return t >= now - 30 * 60 * 1000 && t <= cutoff; // small grace window for games just starting
@@ -455,12 +458,30 @@ export async function getTrendPropOdds(sport, espnEventId, playerName, trendType
     throw err;
   }
 
+  // Confirmed real bug: `available: false` from this function has always
+  // meant "couldn't match this one event" — it does NOT mean "no API key"
+  // (a missing key makes getOdds() below throw, a completely different
+  // path). dailyParlay.js's caller nonetheless treated `available: false`
+  // as "no key configured, stop checking every remaining candidate" and
+  // `break`s its whole loop on it — so one trend whose game just didn't
+  // match (a normal, expected thing) silently stopped every other
+  // candidate from ever being checked. Check the actual "no key" case
+  // explicitly and separately, so a caller can tell the two apart.
+  if (!hasOddsApiKey()) return { available: false, reason: "no-key", outcomes: [] };
+
   const [{ events: oddsEvents }, scoreboard] = await Promise.all([
     getOdds(sport, { markets: "h2h" }), // cheapest bulk call, just to locate the event id
-    getScoreboard(sport),
+    // Confirmed real bug: getScoreboard(sport) with no dates param is
+    // ESPN's "today" window only (see todayAndTomorrowScoreboard above) —
+    // a trend whose game is tomorrow (this app's own trend window spans
+    // today+tomorrow) could never be found here, so its prop-odds check
+    // always failed with "unmatched event," every time, regardless of
+    // whether real odds existed. Use the same merged today+tomorrow
+    // scoreboard the trend window itself uses.
+    todayAndTomorrowScoreboard(sport),
   ]);
   const oddsEvent = oddsEvents.find((e) => matchEspnEvent(e, scoreboard)?.id === espnEventId);
-  if (!oddsEvent) return { available: false, outcomes: [] };
+  if (!oddsEvent) return { available: false, reason: "event-not-found", outcomes: [] };
 
   const { event: propEvent } = await getPlayerProps(sport, oddsEvent.id, marketKey);
   const outcomes = [];
@@ -484,5 +505,24 @@ export async function getTrendPropOdds(sport, espnEventId, playerName, trendType
   // a specific outcome always gets the number that actually corresponds to
   // that specific line — never mixed across points.
   attachDevigProbs(outcomes);
+
+  // Prefer this app's own real graded history for this EXACT line over the
+  // devigged market number, the same priority the rest of this app uses —
+  // but keyed to the specific (side, point), never the score-bucketed
+  // ranking rate (see calibration.js's lookupTrendPointCalibration for why
+  // that distinction matters: score has nothing to do with which threshold
+  // a bet was actually placed at).
+  const { buckets } = await getCalibration();
+  for (const o of outcomes) {
+    const calibration = lookupTrendPointCalibration(buckets, sport.key, trendType, o.side, o.point);
+    if (calibration) {
+      o.trueProb = calibration.rate;
+      o.probSource = "calibration";
+      o.calibrationN = calibration.n;
+    } else if (o.trueProb != null) {
+      o.probSource = "devig";
+    }
+  }
+
   return { available: true, outcomes };
 }

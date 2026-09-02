@@ -21,7 +21,15 @@ function TrendCard({ trend, sport, onAddLeg }) {
     setOdds({ loading: true, checked: false, outcomes: [], error: null });
     try {
       const result = await api.trendPropOdds(sport, trend.eventId, trend.player.name, trend.type);
-      setOdds({ loading: false, checked: true, outcomes: result.outcomes ?? [], error: result.available === false ? "No odds key configured" : null });
+      // Was: always "No odds key configured" whenever available was false —
+      // misleading, since that's almost always just "this game's props
+      // didn't match an odds event yet" (normal, common), not a real key
+      // problem. The server now distinguishes the two.
+      const unavailableMessage =
+        result.reason === "no-key"
+          ? "No odds key configured"
+          : "No matching odds event found for this game yet.";
+      setOdds({ loading: false, checked: true, outcomes: result.outcomes ?? [], error: result.available === false ? unavailableMessage : null });
     } catch (err) {
       setOdds({ loading: false, checked: true, outcomes: [], error: err.message });
     }

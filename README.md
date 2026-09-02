@@ -546,6 +546,95 @@ recording which specific sportsbook a bet was placed at for true CLV) are
 real, but bigger scope changes than fit in one review-response round — left
 as known future work rather than attempted partially.
 
+A fifth round, checking whether the fourth round's fixes actually held up —
+two turned out to be incomplete, plus four more findings, all reproduced
+with a fixture first:
+
+- **Calibration mixed different betting thresholds together — the previous
+  round only separated Over from Under, not which line.** `trendKey()`
+  bucketed by `(sport, trendType, side, score)`; score has nothing to do
+  with the threshold actually bet. 15 graded "Over 2.5 K" bets and a
+  completely different "Over 8.5 K" line could land in the same score band
+  and share a rate — reproduced with the report's own numbers, an Over 8.5
+  line getting the Over 2.5 bucket's 100% instead of its own real ~19%.
+  The fix isn't "add point to the existing key" — that key is legitimately
+  used for RANKING a trend before any specific line is even chosen (score
+  is a reasonable proxy there), so it has to stay. Added a second, separate
+  key scoped to the actual bet identity — `(sport, trendType, side,
+  point)` — used only for PRICING a specific line, never for ranking.
+  `getTrendPropOdds()` now attaches this real, exact-line calibration to
+  each outcome (preferred over the devigged probability, same priority
+  order as before, just correctly scoped), so both the daily parlay and a
+  manually-added TrendFeed leg get it automatically. Verified with a real
+  integration test through betlog.js + calibration.js: the wrong-line
+  lookup now correctly returns null while the right-line lookup shows the
+  real 100%, and the (unrelated, still legitimate) ranking lookup is
+  unaffected.
+- **The doubleheader fix from last round stopped working once only one
+  game remained.** `disambiguateByTime()` returned a single candidate
+  immediately, skipping time validation entirely, on the reasoning that
+  "nothing to disambiguate with only one match." But once Game 1 leaves
+  `STATUS_SCHEDULED` (it's started), the edge feed's event list can shrink
+  to just Game 2 — and if Game 1's odds are still floating around (a
+  lagged quote), that "only candidate" sailed through with zero time
+  check, matching Game 1's odds onto Game 2. Reproduced exactly that
+  live. Fixed: a single candidate now still has to fall within an absolute
+  3-hour window of the odds event's own time, not just be the only name
+  match. Verified the exact reported case now returns null, plus a
+  genuinely-close single candidate and the original multi-candidate
+  disambiguation both still work.
+- **Adding a leg could log the wrong odds — a race between the slip
+  recalculating and the log button staying enabled.** `ParlaySlip.jsx`'s
+  combine request had no ordering guard, so adding a leg quickly (2 legs
+  then 3) could fire two overlapping requests and let the older response
+  overwrite the newer one if it happened to resolve later — and "Log this
+  bet" was only ever disabled while actively submitting, not while the
+  displayed price was stale or still loading. Reproduced the report's
+  case: a 3-leg slip logging at the 2-leg price. Fixed with the standard
+  React fix for this — clear the stale price immediately when legs
+  change, ignore a response that arrives after a newer request has
+  already superseded it, and disable logging (with a "Calculating…"
+  label) whenever the current legs don't have a matching price yet.
+- **The daily parlay's favorites builder could throw away a real favorite
+  in favor of a longshot it was about to reject anyway.** `best` was
+  chosen by price alone across every point mixed together, before
+  checking eligibility — so a longshot point (Over 8.5 K at a real ~19%)
+  could out-pay a genuine favorite on the very same player (Over 2.5 K at
+  ~69%), get picked as `best`, then get rejected by the `MIN_LEG_PROB`
+  floor downstream — discarding the whole trend even though a real
+  favorite existed right next to it. Reproduced with the report's own
+  69.2%/18.9% numbers. Fixed: restrict to eligible (favorite) points
+  first, then compare price only among those.
+- **One trend's odds not matching an event could stop every remaining
+  trend from ever being checked — and separately, prop odds for tomorrow's
+  games could never be found at all.** `getTrendPropOdds()` returned
+  `available: false` whenever it couldn't match an event to an odds
+  event — a normal, common outcome unrelated to API key status — but
+  `trendCandidates()`'s comment and logic both treated that as "no key
+  configured" and `break`s its whole loop, so one ordinary miss silently
+  stopped every other candidate from being checked. Reproduced: a valid
+  second candidate was never reached. Separately: this function called
+  `getScoreboard(sport)` with no date, which is ESPN's today-only default
+  — a trend whose game is tomorrow (this app's own trend window spans
+  today+tomorrow) could never be matched, ever, regardless of whether real
+  odds existed. Fixed: `getTrendPropOdds()` now checks `hasOddsApiKey()`
+  explicitly and returns a `reason` (`"no-key"` vs `"event-not-found"`) so
+  a caller can actually tell the two apart — `trendCandidates()` only
+  breaks on a real no-key result, and continues past an ordinary miss; and
+  it now uses the same merged today+tomorrow scoreboard `gamesInWindow`
+  already relies on (extracted into a shared `todayAndTomorrowScoreboard()`
+  helper) instead of the today-only default. `TrendFeed.jsx`'s "Check
+  odds" button also used to always say "No odds key configured" for any
+  miss — now says something accurate for each case.
+- **The daily parlay's own screen hid same-game correlation warnings the
+  server was already generating.** `combineLegs()` returns
+  `correlationWarnings` for same-game legs without a provable relationship
+  (the naive number could be off in either direction, not just optimistic)
+  — `ParlaySlip.jsx` renders these, `DailyParlay.jsx` never did, so a
+  warning the server generated was simply invisible on this specific
+  screen. Confirmed the server producing one that never reached the
+  rendered output. Fixed: renders the same list, the same way.
+
 ## Daily longshot parlay
 
 Once a day (the first time you load the tab after the calendar date rolls
