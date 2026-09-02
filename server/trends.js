@@ -256,7 +256,7 @@ async function pitcherKTrends({ event, pitcher, pitcherTeamName, oppTeamId, oppT
       matchup: `${event.away.name} @ ${event.home.name}`,
       type: "pitcherK",
       player: { id: pitcher.id, name: pitcher.name, team: pitcherTeamName },
-      opponent: { team: oppTeamName, teamBattingAvg: oppContext.avg },
+      opponent: { team: oppTeamName, teamBattingAvg: oppContext.avg != null ? formatAvg(oppContext.avg) : null },
       matchupLabel: matchup.label,
       park: park ? { name: park.name, note: park.note ?? null } : null,
       weather,
