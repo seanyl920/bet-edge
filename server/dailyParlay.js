@@ -82,6 +82,13 @@ async function edgeCandidates() {
         continue;
       }
       warn("edgeCandidates", `${sport.key}: ${edges.length} priced side(s) returned`);
+      if (edges.length > 0) {
+        const sample = edges[0];
+        warn(
+          "edgeCandidates",
+          `${sport.key} sample edge: americanOdds=${sample.americanOdds} decimalOdds=${sample.decimalOdds} modelProb=${sample.modelProb} marketProb=${sample.marketProb} blendedProb=${sample.blendedProb} sampleSize=${sample.sampleSize}`
+        );
+      }
       for (const e of edges) {
         out.push({
           source: "edge",
