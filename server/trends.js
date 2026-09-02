@@ -23,6 +23,7 @@ import { MLB_PARKS } from "./parks.js";
 import { getOdds, getPlayerProps, hasOddsApiKey } from "./oddsApi.js";
 import { matchEspnEvent } from "./teamMatch.js";
 import { getCalibration, lookupTrendCalibration, lookupTrendPointCalibration } from "./calibration.js";
+import { getBatterProfileByName, getPitcherProfileByName } from "./savantData.js";
 import { localDateKey } from "./dateUtil.js";
 import { cached } from "./cache.js";
 import { americanToDecimal, devigMultiplicative } from "./oddsMath.js";
@@ -215,7 +216,14 @@ async function battingTrendsForTeam({ event, batterTeamId, batterTeamName, oppTe
   const trends = [];
   await Promise.all(
     batters.map(async (batter) => {
-      const log = await getBatterGameLog(batter.id);
+      // Season-level true-talent context from Baseball Savant — K%, BB%,
+      // whiff%, barrel rate — kept separate from the streak itself (a
+      // hitStreak is still a streak, this is supporting context on the
+      // batter's underlying ability, not a probability). NOT split by
+      // handedness yet (see savantData.js's header comment); matched by
+      // exact normalized name, so `null` here means "not found or
+      // ambiguous," never "zero contact skill" — see getBatterProfileByName.
+      const [log, savant] = await Promise.all([getBatterGameLog(batter.id), getBatterProfileByName(batter.name)]);
       if (!log.length) return;
 
       const hitStreak = consecutiveStreak(log, (g) => g.H >= 1);
@@ -242,6 +250,16 @@ async function battingTrendsForTeam({ event, batterTeamId, batterTeamName, oppTe
         // "someone on the roster" — see getConfirmedLineup. Never silently
         // presented as if the two were the same thing.
         lineupStatus,
+        savant: savant
+          ? {
+              kPercent: savant.kPercent,
+              bbPercent: savant.bbPercent,
+              whiffPercent: savant.whiffPercent,
+              barrelRate: savant.barrelRate,
+              season: savant.season,
+              splitByHandedness: savant.splitByHandedness,
+            }
+          : null,
       };
 
       const batterTrends = [];
@@ -309,9 +327,10 @@ async function battingTrendsForTeam({ event, batterTeamId, batterTeamName, oppTe
 // buildTrends()/getTrendFeed().
 export async function pitcherKTrends({ event, pitcher, pitcherTeamName, oppTeamId, oppTeamName, park, weather, startingPitcherRole }) {
   if (!pitcher) return [];
-  const [log, oppContext] = await Promise.all([
+  const [log, oppContext, savant] = await Promise.all([
     getPitcherGameLog(pitcher.id),
     getTeamBattingContext(oppTeamId),
+    getPitcherProfileByName(pitcher.name),
   ]);
   if (!log.length) return [];
 
@@ -360,6 +379,9 @@ export async function pitcherKTrends({ event, pitcher, pitcherTeamName, oppTeamI
       daysRest,
       confirmedRole: role,
       workloadNote: workloadNotes.length ? workloadNotes.join("; ") : null,
+      savant: savant
+        ? { kPercent: savant.kPercent, bbPercent: savant.bbPercent, whiffPercent: savant.whiffPercent, season: savant.season, splitByHandedness: savant.splitByHandedness }
+        : null,
       headline:
         kStreak >= K_STREAK_MIN
           ? `${pitcher.name} has 6+ strikeouts in ${kStreak} straight starts`

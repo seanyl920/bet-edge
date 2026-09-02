@@ -45,6 +45,14 @@ function gamelogFixture(lastStartIso) {
 function stubFetchFor(lastStartIso) {
   globalThis.fetch = async (url) => {
     if (url.includes("/gamelog")) return { ok: true, json: async () => gamelogFixture(lastStartIso) };
+    if (url.includes("baseballsavant.mlb.com")) {
+      // pitcherKTrends now also looks up a Savant profile — not what this
+      // file tests, so a non-CSV body is enough: savantData.js fails that
+      // fetch loudly internally and getPitcherProfileByName resolves to
+      // null, same as "not found," which every test here already treats
+      // as the neutral/default case.
+      return { ok: true, text: async () => "not csv" };
+    }
     // Team batting-context lookup — empty is fine, getTeamBattingContext is
     // defensive about a missing shape and returns nulls, not a throw.
     return { ok: true, json: async () => ({}) };
@@ -80,7 +88,7 @@ test("pitcherKTrends computes days rest from the pitcher's own game log", async 
 test("pitcherKTrends leaves daysRest null (never 0 or guessed) when there's no prior start to measure from", async () => {
   globalThis.fetch = async (url) => {
     if (url.includes("/gamelog")) return { ok: true, json: async () => ({ labels: ["IP", "SO"], statistics: [{ events: [] }], events: {} }) };
-    return { ok: true, json: async () => ({}) };
+    return { ok: true, json: async () => ({}), text: async () => "not csv" };
   };
   const trends = await pitcherKTrends(baseArgs("pitcher-no-log"));
   // Empty log means parseGameLog returns [] and pitcherKTrends bails before

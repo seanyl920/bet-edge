@@ -847,6 +847,34 @@ enough to mean something, and even then only against the specific
   adjustment the way the opener-role penalty is. Both are `null`/absent
   when there's nothing to compute from (no prior start logged, no
   confirmed role yet) — never a guessed number.
+- **Trends now show a season-level K%/BB%/whiff%/barrel-rate profile from
+  Baseball Savant — real data, verified live, with real gaps.** Baseball
+  Savant's custom-leaderboard CSV export (`server/savantData.js`) was
+  confirmed live (Sept 2026) to work unauthenticated, no bot-blocking —
+  FanGraphs, by contrast, returned a Cloudflare bot-challenge page on every
+  endpoint tried, so it was deliberately NOT built (getting past that would
+  mean impersonating a browser to defeat bot protection, not reading a
+  public export). Three real limits, not smoothed over:
+  1. **Season-level only, not split by handedness.** A split query was
+     attempted live and came back unsplit — no verified `split=` parameter
+     exists yet. Every value this app shows says `splitByHandedness: false`
+     and the UI states it plainly, right next to the numbers.
+  2. **No shared player identifier with the rest of this app.** Savant's
+     `player_id` is MLB Advanced Media's own id; ESPN's athlete id (used
+     everywhere else here) is a different numbering entirely — confirmed
+     live (Francisco Lindor's ESPN id is 32129, nowhere close to his real
+     MLBAM id, 596019). Matching is by exact normalized full name only —
+     deliberately NOT the looser subset-match `namesMatch()` already used
+     for odds-prop matching elsewhere, since attaching one player's K%/
+     whiff% to a different player of a similar name is worse than just not
+     finding a match. Any name shared by two different `player_id`s in the
+     same response is dropped from the lookup entirely, not guessed.
+  3. **This is context, not yet a probability.** These numbers are shown
+     on the trend card the same way ERA/WHIP/weather already are — nothing
+     currently converts K%/whiff% into an "expected strikeout" or an
+     exact-line probability. Building that outcome distribution honestly
+     (combining opportunity with per-opportunity ability, per this
+     project's own requirement) is Priority 3 work, not done yet.
 - **The trend feed does not claim to know which way the wind blows relative
   to any specific park.** MLB's official rule of thumb is that a park's
   home-plate-to-outfield line should run east-northeast, but real parks
@@ -905,6 +933,7 @@ enough to mean something, and even then only against the specific
 | Live multi-book odds (moneyline/spread/total) | [The Odds API](https://the-odds-api.com) | **Yes** (free tier: ~500 req/mo) |
 | Player-prop odds (MLB trends' "check odds") | The Odds API, fetched only on click | **Yes** |
 | Outdoor-stadium weather (NFL, MLB) | [Open-Meteo](https://open-meteo.com/) | No |
+| Season K%/BB%/whiff%/barrel-rate (MLB trends, season-level, unsplit) | [Baseball Savant](https://baseballsavant.mlb.com/) custom-leaderboard CSV export | No |
 | Win/margin model | Elo, built server-side from this season's completed games | No |
 | Bet log | Local JSON file (`data/bets.json`) | No |
 
@@ -988,9 +1017,10 @@ server/
   oddsMath.js         American/decimal odds, devig, EV, Kelly stake
   espn.js               ESPN client: teams, scoreboard, schedules, injuries
   mlbData.js             MLB-specific ESPN calls: probables, CONFIRMED starting lineups, rosters, gamelogs, pitcher/team stats
+  savantData.js           Baseball Savant custom-leaderboard CSV: season K%/BB%/whiff%/barrel-rate, name-matched (no shared id with ESPN)
   statFind.js              Defensive deep-search helpers for ESPN's loosely-shaped stat blobs
   streaks.js                Pure streak/rate math over a normalized game log
-  trends.js                   Builds the MLB trend feed: streaks + matchup + weather + heuristic score
+  trends.js                   Builds the MLB trend feed: streaks + matchup + weather + Savant context + heuristic score
   oddsApi.js                    The Odds API client (cached; player props fetched on-demand only)
   teamMatch.js                    Matches ESPN events to Odds API events
   edges.js                          Combines model + market into the edge feed
@@ -1012,6 +1042,7 @@ test/
   predictionEval.test.js     node:test coverage for predictionEval.js (analyzeBetFn stubbed — no live ESPN in this sandbox)
   mlbLineup.test.js            node:test coverage for getConfirmedLineup() (fetch stubbed with fixtures matching a real confirmed/unconfirmed live response)
   pitcherWorkload.test.js      node:test coverage for pitcherKTrends' days-rest and opener-role math
+  savantData.test.js           node:test coverage for savantData.js, using REAL CSV rows pasted from a live Savant response this session
 src/
   App.jsx           Tabs, sport switcher, slip state
   api.js             Frontend fetch wrappers
@@ -1039,14 +1070,22 @@ src/
   (no new endpoint needed), role from the same confirmed-boxscore signal
   `getConfirmedLineup()` uses for batting order (`startingPitcherRole`,
   "SP" vs. "RP" — a real opener/bulk-reliever tell).
-- **Matchup-specific K/contact rates (Priority 2)**: confirmed opposing
-  lineup's K rate vs. the starter's handedness, pitcher K/BB vs. LHB/RHB,
-  swinging-strike/contact rates — needs Statcast-tier data ESPN's free API
-  doesn't have. Scraping Baseball Savant/FanGraphs (preferring their CSV/
-  leaderboard bulk-export endpoints over raw HTML) was chosen over a paid
-  provider; not built yet — needs its own live-response verification pass
-  the same way every other data source in this app got one, in a separate
-  adapter module kept apart from the prediction logic that would consume it.
+- **Handedness-split K/BB/whiff rates (Priority 2, partial)**: season-level
+  (unsplit) K%/BB%/whiff%/barrel-rate is built (`server/savantData.js`, see
+  Honesty & limits above) — the confirmed opposing lineup's K rate vs. the
+  *starter's handedness specifically*, and pitcher K/BB vs. LHB/RHB, are
+  not. No handedness-split query against Savant's leaderboard endpoint has
+  been confirmed live yet. Next step would be capturing the real request
+  Savant's own leaderboard UI makes when a human applies a handedness
+  filter in a browser (Network tab → copy the URL) — a more reliable way to
+  find the real parameter than guessing more query strings blind, the way
+  the first attempt was.
+- **Converting Savant's K%/BB%/whiff% into an actual exact-line
+  probability (Priority 3)**: not built. Currently shown as supporting
+  context only, the same way ERA/WHIP/weather are — turning opportunity
+  (projected PA/BF) combined with per-opportunity ability (K%) into a real
+  outcome distribution, rather than one number standing in for a
+  probability, is explicitly Priority 3 scope.
 - **Add a league to the edge feed**: add one entry to `server/sports.js`
   (Elo constants + ESPN/Odds API sport keys); ESPN's site API and The Odds
   API both cover NHL and most major soccer leagues with the same URL shape.
