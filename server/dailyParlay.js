@@ -63,13 +63,25 @@ async function writeStore(entry) {
   await writeFile(FILE, JSON.stringify(entry, null, 2));
 }
 
+// This used to fail (or come back thin) with nothing in the terminal to
+// explain why — both catches below were bare `catch {}`, silently
+// swallowing whatever actually went wrong. Logs now, prefixed so they're
+// easy to find alongside mlbData.js's [mlbData] ones.
+function warn(fn, detail) {
+  console.warn(`[dailyParlay] ${fn}: ${detail}`);
+}
+
 /** Every priced moneyline/spread side across every sport, not just the ones that clear an EV threshold — we want the full "favorites" universe here, not just flagged edges. Reuses the already-cached bulk odds fetch, so this costs no extra API credits. */
 async function edgeCandidates() {
   const out = [];
   for (const sport of Object.values(SPORTS)) {
     try {
       const { edges, oddsAvailable } = await getEdgeFeed(sport, { threshold: -1 });
-      if (!oddsAvailable) continue;
+      if (!oddsAvailable) {
+        warn("edgeCandidates", `${sport.key}: odds not available (no API key configured, or the odds fetch failed upstream)`);
+        continue;
+      }
+      warn("edgeCandidates", `${sport.key}: ${edges.length} priced side(s) returned`);
       for (const e of edges) {
         out.push({
           source: "edge",
@@ -89,7 +101,8 @@ async function edgeCandidates() {
           decimalOdds: americanToDecimal(e.americanOdds),
         });
       }
-    } catch {
+    } catch (err) {
+      warn("edgeCandidates", `${sport.key}: threw — ${err.message}`);
       // one sport's odds being unavailable shouldn't sink the whole build
     }
   }
@@ -124,7 +137,8 @@ async function trendCandidates() {
   let trends;
   try {
     ({ trends } = await getTrendFeed(sport));
-  } catch {
+  } catch (err) {
+    warn("trendCandidates", `getTrendFeed threw — ${err.message}`);
     return [];
   }
 
@@ -164,7 +178,8 @@ async function trendCandidates() {
         probSource: t.calibration?.rate != null ? "calibration" : "devig",
         decimalOdds: americanToDecimal(best.price),
       });
-    } catch {
+    } catch (err) {
+      warn("trendCandidates", `${t.player?.name ?? t.eventId}: threw — ${err.message}`);
       // one player's prop lookup failing shouldn't sink the whole build
     }
   }
@@ -209,6 +224,10 @@ async function build() {
   const [edges, trends] = await Promise.all([edgeCandidates(), trendCandidates()]);
   const allPriced = [...edges, ...trends].filter((c) => c.trueProb != null && c.decimalOdds != null);
   const candidates = allPriced.filter((c) => c.trueProb >= MIN_LEG_PROB);
+  warn(
+    "build",
+    `${edges.length} edge-feed leg(s) + ${trends.length} trend leg(s) raw → ${allPriced.length} priced → ${candidates.length} favorite(s) (≥${MIN_LEG_PROB})`
+  );
 
   if (candidates.length === 0) {
     return {
