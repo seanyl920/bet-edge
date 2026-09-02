@@ -101,7 +101,7 @@ export async function getTeamBatters(teamId) {
   });
 }
 
-function parseGameLog(data, statAliases, debugLabel) {
+function parseGameLog(data, statAliases, debugLabel, presenceAliases) {
   // Real shape (confirmed against a live response — see git history for the
   // earlier best-guess this replaced): `labels`/`names` are shared arrays at
   // the TOP LEVEL of the whole gamelog response, not per-category. Each
@@ -129,6 +129,15 @@ function parseGameLog(data, statAliases, debugLabel) {
     warn(debugLabel, `none of ${JSON.stringify(Object.values(statAliases).flat())} matched the labels/names array: ${JSON.stringify(sharedNames)}`);
     return [];
   }
+  // A separate "did the player actually appear" index (at-bats for batters,
+  // innings pitched for pitchers) — NOT "was any requested stat nonzero".
+  // That distinction is the whole fix here: a real 0-for-4 game has H=0 for
+  // every requested stat, and needs to stay in the log (to correctly break a
+  // hit streak), not get filtered out as if the player didn't play.
+  const presenceIdx = presenceAliases ? findStatIndex(sharedNames, presenceAliases) : -1;
+  if (presenceAliases && presenceIdx === -1) {
+    warn(debugLabel, `presence stat ${JSON.stringify(presenceAliases)} not found in labels/names — falling back to "any requested stat nonzero", which undercounts 0-for-everything games.`);
+  }
 
   // Confirmed against a live response: `categories` isn't one category per
   // season with the "real" one conveniently at index 0 — it's split into
@@ -148,16 +157,21 @@ function parseGameLog(data, statAliases, debugLabel) {
       for (const [key, idx] of Object.entries(indices)) {
         values[key] = idx === -1 ? null : Number(stats[idx]) || 0;
       }
+      const presence = presenceIdx === -1 ? null : Number(stats[presenceIdx]) || 0;
       const dateStr = eventDates[ev.eventId]?.gameDate ?? ev.gameDate ?? ev.date ?? null;
-      byEvent.set(ev.eventId, { eventId: ev.eventId, date: dateStr, ...values });
+      byEvent.set(ev.eventId, { eventId: ev.eventId, date: dateStr, presence, ...values });
     }
   }
 
-  const games = [...byEvent.values()].filter((g) =>
-    Object.entries(g).some(([key, v]) => key !== "eventId" && key !== "date" && typeof v === "number" && v > 0)
-  );
+  const games = [...byEvent.values()]
+    .filter((g) =>
+      g.presence != null
+        ? g.presence > 0
+        : Object.entries(g).some(([key, v]) => key !== "eventId" && key !== "date" && typeof v === "number" && v > 0)
+    )
+    .map(({ presence, ...rest }) => rest);
   if (games.length === 0 && byEvent.size > 0) {
-    warn(debugLabel, `merged ${categories.length} categories (${byEvent.size} raw games) but every game had all-zero stats — likely an index problem, not a real 0-for-everything player.`);
+    warn(debugLabel, `merged ${categories.length} categories (${byEvent.size} raw games) but every game was filtered out as "didn't appear" — likely an index problem, not a real 0-for-everything player.`);
   }
 
   games.sort((a, b) => new Date(b.date ?? 0) - new Date(a.date ?? 0));
@@ -170,12 +184,15 @@ export async function getBatterGameLog(playerId) {
     try {
       const data = await getJson(`${WEB_BASE}/athletes/${playerId}/gamelog`);
       // Confirmed live: the top-level `names` array uses full camelCase words
-      // ("hits", "homeRuns", "RBIs"); `labels` (probably abbreviations like
-      // "H"/"HR"/"RBI") is preferred when present — both are covered here.
+      // ("hits", "homeRuns", "RBIs"); `labels` (confirmed abbreviations —
+      // "H"/"HR"/"RBI"/"AB"/...) is preferred when present — both covered here.
+      // Presence = at-bats: a real 0-for-4 game (H=0) must stay in the log to
+      // correctly break a hit streak, not get dropped as "didn't play".
       return parseGameLog(
         data,
         { H: ["H", "hits"], HR: ["HR", "homeRuns"], RBI: ["RBI", "RBIs"] },
-        `getBatterGameLog(${playerId})`
+        `getBatterGameLog(${playerId})`,
+        ["AB", "atBats"]
       );
     } catch (err) {
       warn("getBatterGameLog", `player ${playerId}: request failed — ${err.message}`);
@@ -192,11 +209,13 @@ export async function getPitcherGameLog(playerId) {
       // Pitching gamelogs weren't directly confirmed (only batting was) — these
       // aliases are the same kind of guess as before, just with more variants.
       // If pitcher trends stay empty, check the [mlbData] warn output for this
-      // function the same way the batting one just got diagnosed.
+      // function the same way the batting one just got diagnosed. Presence =
+      // innings pitched, so a start with 0 strikeouts stays in the log.
       return parseGameLog(
         data,
         { SO: ["SO", "K", "strikeouts"], IP: ["IP", "inningsPitched"] },
-        `getPitcherGameLog(${playerId})`
+        `getPitcherGameLog(${playerId})`,
+        ["IP", "inningsPitched"]
       );
     } catch (err) {
       warn("getPitcherGameLog", `player ${playerId}: request failed — ${err.message}`);
