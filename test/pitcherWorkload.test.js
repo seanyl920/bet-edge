@@ -7,6 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { pitcherKTrends } from "../server/trends.js";
+import { clearCache } from "../server/cache.js";
 
 const originalFetch = globalThis.fetch;
 test.after(() => {
@@ -43,6 +44,7 @@ function gamelogFixture(lastStartIso) {
 }
 
 function stubFetchFor(lastStartIso) {
+  clearCache("savant:"); // see the K-BB% tests below for why this matters across tests
   globalThis.fetch = async (url) => {
     if (url.includes("/gamelog")) return { ok: true, json: async () => gamelogFixture(lastStartIso) };
     if (url.includes("baseballsavant.mlb.com")) {
@@ -121,4 +123,30 @@ test("pitcherKTrends ignores startingPitcherRole when its id doesn't match this 
   // misattributed to the one this trend is actually about.
   const [trend] = await pitcherKTrends(baseArgs("pitcher-substitution", { startingPitcherRole: { id: "someone-else", role: "RP" } }));
   assert.equal(trend.confirmedRole, null);
+});
+
+test("pitcherKTrends computes K-BB% from Savant's kPercent/bbPercent when a profile is found", async () => {
+  clearCache("savant:");
+  globalThis.fetch = async (url) => {
+    if (url.includes("/gamelog")) return { ok: true, json: async () => gamelogFixture("2026-08-27T23:00:00Z") };
+    if (url.includes("baseballsavant.mlb.com")) {
+      // Real CSV shape, values chosen so K-BB% has an unambiguous expected
+      // result: 28.9 - 7.1 = 21.8.
+      return {
+        ok: true,
+        text: async () =>
+          `"last_name, first_name","player_id","year","k_percent","bb_percent","whiff_percent"\n"Pitcher, Test",42604,2026,28.9,7.1,28.1\n`,
+      };
+    }
+    return { ok: true, json: async () => ({}) };
+  };
+  const [trend] = await pitcherKTrends(baseArgs("42604"));
+  assert.ok(trend.savant, "expected a matched Savant profile");
+  assert.equal(trend.savant.kMinusBBPercent, 21.8);
+});
+
+test("pitcherKTrends leaves kMinusBBPercent null (never 0) when no Savant profile is found", async () => {
+  stubFetchFor("2026-08-27T23:00:00Z"); // stubFetchFor's Savant response is "not csv" -> no match
+  const [trend] = await pitcherKTrends(baseArgs("pitcher-no-savant"));
+  assert.equal(trend.savant, null);
 });

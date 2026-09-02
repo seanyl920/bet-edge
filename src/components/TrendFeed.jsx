@@ -103,6 +103,7 @@ function TrendCard({ trend, sport, onAddLeg }) {
             {trend.savant.season ? `, ${trend.savant.season}` : ""}
             {!trend.savant.splitByHandedness ? ", not split by handedness" : ""}): K% {trend.savant.kPercent ?? "—"} ·
             BB% {trend.savant.bbPercent ?? "—"} · Whiff% {trend.savant.whiffPercent ?? "—"}
+            {trend.savant.kMinusBBPercent != null ? ` · K-BB% ${trend.savant.kMinusBBPercent}` : ""}
             {trend.savant.barrelRate != null ? ` · Barrel% ${trend.savant.barrelRate}` : ""}
           </div>
         )}

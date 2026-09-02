@@ -26,7 +26,7 @@ import { getCalibration, lookupTrendCalibration, lookupTrendPointCalibration } f
 import { getBatterProfileByName, getPitcherProfileByName } from "./savantData.js";
 import { localDateKey } from "./dateUtil.js";
 import { cached } from "./cache.js";
-import { americanToDecimal, devigMultiplicative } from "./oddsMath.js";
+import { americanToDecimal, devigMultiplicative, round } from "./oddsMath.js";
 
 const HIT_STREAK_MIN = 5;
 const RBI_STREAK_MIN = 3;
@@ -380,7 +380,19 @@ export async function pitcherKTrends({ event, pitcher, pitcherTeamName, oppTeamI
       confirmedRole: role,
       workloadNote: workloadNotes.length ? workloadNotes.join("; ") : null,
       savant: savant
-        ? { kPercent: savant.kPercent, bbPercent: savant.bbPercent, whiffPercent: savant.whiffPercent, season: savant.season, splitByHandedness: savant.splitByHandedness }
+        ? {
+            kPercent: savant.kPercent,
+            bbPercent: savant.bbPercent,
+            whiffPercent: savant.whiffPercent,
+            season: savant.season,
+            splitByHandedness: savant.splitByHandedness,
+            // K-BB% — the single-number pitching-skill estimator this
+            // project's own instructions specifically asked to evaluate.
+            // Real, standard, no new data source: just the two rates
+            // already fetched. `null` (not 0) when either input is
+            // missing, same as everywhere else in this file.
+            kMinusBBPercent: savant.kPercent != null && savant.bbPercent != null ? round(savant.kPercent - savant.bbPercent, 1) : null,
+          }
         : null,
       headline:
         kStreak >= K_STREAK_MIN
