@@ -81,7 +81,12 @@ async function getParkWeather(sport, homeAbbreviation, isoDate) {
 
 async function battingTrendsForTeam({ event, batterTeamId, batterTeamName, oppTeamId, oppTeamName, oppPitcher, park, weather }) {
   const batters = await getTeamBatters(batterTeamId);
-  const pitcherStats = oppPitcher ? await getPitcherSeasonStats(oppPitcher.id) : { era: null, whip: null, k9: null };
+  // ERA from getProbablePitchers (pulled straight from a confirmed-working
+  // pregame boxscore) is preferred over the separate /overview endpoint
+  // below, whose response shape was never directly verified — WHIP/K9 still
+  // come from it, best-effort, for display only (not used in scoring).
+  const seasonStats = oppPitcher ? await getPitcherSeasonStats(oppPitcher.id) : { era: null, whip: null, k9: null };
+  const pitcherStats = { ...seasonStats, era: oppPitcher?.era ?? seasonStats.era };
   const matchup = pitcherMatchupLabel(pitcherStats.era);
 
   const trends = [];

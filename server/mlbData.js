@@ -61,9 +61,18 @@ export async function getProbablePitchers(espnEventId) {
         const starter = pitching?.athletes?.find((a) => a.starter) ?? pitching?.athletes?.[0];
         const athlete = starter?.athlete;
         if (!athlete?.id) continue;
+        // Bonus find from the same diagnostic: this pregame boxscore already
+        // carries the starter's season ERA (everything else in the row is a
+        // "--" placeholder pregame, but ERA is season-cumulative, not
+        // per-game). Grab it here rather than relying on the separate
+        // /athletes/:id/overview endpoint, whose shape isn't confirmed.
+        const eraIdx = (pitching?.names ?? []).findIndex((n) => String(n).toUpperCase() === "ERA");
+        const eraRaw = eraIdx !== -1 ? starter.stats?.[eraIdx] : null;
+        const era = eraRaw != null && eraRaw !== "--" ? Number(eraRaw) : null;
         result[ha] = {
           id: String(athlete.id),
           name: athlete.displayName ?? athlete.fullName ?? athlete.shortName ?? "Unknown",
+          era: Number.isFinite(era) ? era : null,
         };
       }
 
