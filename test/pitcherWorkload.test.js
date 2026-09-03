@@ -117,12 +117,25 @@ test("pitcherKTrends applies the opener-role penalty and note when the confirmed
   assert.ok(withOpenerRole[0].score < withoutRole[0].score, "an opener/bulk-reliever role must score lower than an unknown/traditional-starter role");
 });
 
-test("pitcherKTrends ignores startingPitcherRole when its id doesn't match this pitcher (a substitution)", async () => {
+test("pitcherKTrends suppresses the trend entirely when the confirmed starter's id disagrees with the probable pitcher (a real substitution/scratch)", async () => {
+  // Confirmed real bug: this used to just null out the role label and keep
+  // generating a normal-looking recommendation for the apparently-
+  // superseded probable pitcher, with no warning at all. A confirmed
+  // starter that isn't this pitcher means this pitcher likely isn't
+  // starting — suppress the trend rather than recommend it anyway.
   stubFetchFor("2026-08-27T23:00:00Z");
-  // Confirmed role belongs to a DIFFERENT pitcher id — must not be
-  // misattributed to the one this trend is actually about.
-  const [trend] = await pitcherKTrends(baseArgs("pitcher-substitution", { startingPitcherRole: { id: "someone-else", role: "RP" } }));
-  assert.equal(trend.confirmedRole, null);
+  const trends = await pitcherKTrends(baseArgs("pitcher-substitution", { startingPitcherRole: { id: "someone-else", role: "RP" } }));
+  assert.deepEqual(trends, []);
+});
+
+test("pitcherKTrends still generates the trend normally when nothing is confirmed yet (not a conflict, just unconfirmed)", async () => {
+  // startingPitcherRole: null must NOT be treated the same as a genuine
+  // id mismatch — "nothing posted yet" is the normal, common pregame
+  // state, not evidence of a scratch.
+  stubFetchFor("2026-08-27T23:00:00Z");
+  const trends = await pitcherKTrends(baseArgs("pitcher-unconfirmed", { startingPitcherRole: null }));
+  assert.equal(trends.length, 1);
+  assert.equal(trends[0].confirmedRole, null);
 });
 
 test("pitcherKTrends computes K-BB% from Savant's kPercent/bbPercent when a profile is found", async () => {

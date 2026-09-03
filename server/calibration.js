@@ -59,10 +59,45 @@ function trendPointKey(sport, trendType, side, point) {
   return `trendpoint:${sport}:${trendType}:${sideKey}:${pointKey}`;
 }
 
-/** Rebuilds the full calibration table from every graded bet in the log. */
-export async function getCalibration() {
-  const bets = await listBets();
+// Confirmed real bug (external review, Sept 2026): nothing stopped the SAME
+// real-world occurrence — the same player, same game, same market/side/
+// threshold — from being counted more than once toward a bucket's n. There
+// was no dedup on addBet(), so logging (or re-logging, e.g. a retried
+// request) the identical prop multiple times inflated n every time — a
+// reproduced fixture showed 15 copies of one winning prop producing a
+// "calibrated" 100% rate at n=15, when it's really one observed outcome
+// repeated 15 times in the log, not 15 independent examples of how often
+// that bet type wins. Real, INDEPENDENT repeats (the same bet TYPE placed
+// on 15 different games) must still each count — this only needs to
+// collapse duplicates of the exact same real occurrence.
+//
+// Identity is (eventId, player/side/market/threshold) — deliberately NOT
+// checked when eventId is missing (an older bet that never captured one):
+// collapsing two DIFFERENT games that both happen to lack an eventId would
+// be a worse bug than the one this fixes, so an unverifiable identity is
+// left uncollapsed (counted, same as before) rather than guessed.
+function legOccurrenceKey(leg, ctx) {
+  if (!leg.eventId) return null;
+  if (ctx.kind === "trend") {
+    if (!ctx.playerId) return null;
+    return `trend-occ:${leg.eventId}:${ctx.playerId}:${ctx.trendType ?? "?"}:${ctx.propSide ?? "?"}:${ctx.propPoint ?? "?"}`;
+  }
+  if (ctx.kind === "edge") {
+    return `edge-occ:${leg.eventId}:${leg.market ?? "?"}:${ctx.side ?? "?"}:${ctx.line ?? "?"}`;
+  }
+  return null;
+}
+
+/**
+ * Rebuilds the full calibration table from every graded bet in the log.
+ * `listBetsFn` defaults to betlog.js's real listBets() (reads
+ * data/bets.json) — overridable so tests can exercise the bucketing/dedup
+ * logic here with a fixture instead of the real bet-log file.
+ */
+export async function getCalibration({ listBetsFn = listBets } = {}) {
+  const bets = await listBetsFn();
   const buckets = new Map();
+  const seenOccurrences = new Set();
 
   for (const bet of bets) {
     if (!bet.postmortem?.legs?.length || !Array.isArray(bet.legs)) continue;
@@ -72,6 +107,13 @@ export async function getCalibration() {
 
       const ctx = leg.context ?? {};
       const sport = leg.sport ?? bet.sport;
+
+      const occKey = legOccurrenceKey(leg, ctx);
+      if (occKey) {
+        if (seenOccurrences.has(occKey)) return; // same real occurrence already counted — never double-count
+        seenOccurrences.add(occKey);
+      }
+
       const keys = []; // a leg can bump more than one bucket (ranking + pricing, for a trend leg)
       if (ctx.kind === "trend") {
         keys.push([

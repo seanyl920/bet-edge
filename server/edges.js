@@ -177,8 +177,13 @@ function makeEdge({ event, sport, market, side, team, line, best, modelProb, mar
 // exactly what makeEdge() returns; `leg` is built to match the shape
 // EdgeFeed.jsx already attaches to a manually-added leg, so postmortem.js's
 // analyzeBet() can grade this later without a second implementation.
-function logEdgePrediction(edge) {
-  recordPrediction({
+//
+// Confirmed real bug (found alongside a related fix in trends.js): this
+// used to call recordPrediction() without awaiting it — fire-and-forget,
+// racing any read that happened shortly after (e.g. predictionEval.js
+// grading moments later). async + awaited at every call site below.
+async function logEdgePrediction(edge) {
+  await recordPrediction({
     sport: edge.sport,
     kind: "edge",
     subjectId: edge.eventId,
@@ -277,7 +282,7 @@ export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
         best: ml.bestHome, modelProb: prediction.homeWinProb, marketProb: ml.consensus.home,
         sampleSize: prediction.sampleSize,
       });
-      logEdgePrediction(edge);
+      await logEdgePrediction(edge);
       if (edge.ev >= threshold) edges.push(edge);
     }
     if (ml.bestAway) {
@@ -286,7 +291,7 @@ export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
         best: ml.bestAway, modelProb: prediction.awayWinProb, marketProb: ml.consensus.away,
         sampleSize: prediction.sampleSize,
       });
-      logEdgePrediction(edge);
+      await logEdgePrediction(edge);
       if (edge.ev >= threshold) edges.push(edge);
     }
 
@@ -319,7 +324,7 @@ export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
           best: spread.bestHome, modelProb: coverProbHome, marketProb: spread.consensus.home,
           sampleSize: prediction.sampleSize,
         });
-        logEdgePrediction(edge);
+        await logEdgePrediction(edge);
         if (edge.ev >= threshold) edges.push(edge);
       }
       if (spread.bestAway) {
@@ -328,7 +333,7 @@ export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
           best: spread.bestAway, modelProb: coverProbAway, marketProb: spread.consensus.away,
           sampleSize: prediction.sampleSize,
         });
-        logEdgePrediction(edge);
+        await logEdgePrediction(edge);
         if (edge.ev >= threshold) edges.push(edge);
       }
     }

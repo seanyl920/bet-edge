@@ -21,7 +21,6 @@ import { getTrendFeed, getTrendPropOdds } from "./trends.js";
 import { combineLegs } from "./parlay.js";
 import { americanToDecimal } from "./oddsMath.js";
 import { localDateKey } from "./dateUtil.js";
-import { recordPrediction } from "./predictionLog.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, "..", "data");
@@ -103,11 +102,12 @@ async function edgeCandidates() {
       // just today's — that's the right behavior for the main Edge Feed
       // tab (you want to see next week's NFL lines there too), but wrong
       // for a "today's favorites" parlay: a leg for a game a week out
-      // shouldn't be stacked into something meant to resolve today. The
-      // Trends side already has this same-day restriction (gamesInWindow);
-      // the edge-feed side never did. Confirmed live: the user reported
-      // NFL games from a week out (season hadn't started yet) showing up
-      // here. Filter to this app's own local calendar day.
+      // shouldn't be stacked into something meant to resolve today.
+      // trendCandidates() below has its own equivalent filter, for the
+      // same reason (its underlying window spans today AND tomorrow, not
+      // just today). Confirmed live: the user reported NFL games from a
+      // week out (season hadn't started yet) showing up here. Filter to
+      // this app's own local calendar day.
       const todaysEdges = edges.filter((e) => localDateKey(e.commenceTime) === todayKey());
       if (todaysEdges.length !== edges.length) {
         warn(
@@ -173,62 +173,48 @@ async function edgeCandidates() {
   return out;
 }
 
-/** Top MLB trend candidates, each checked against real prop odds — bounded, see MAX_TREND_ODDS_CHECKS. */
-// Logs every priced Over/Under outcome for a trend — not just the eligible
-// favorite the parlay build actually chooses — so a later evaluation sees
-// the full distribution of what this app priced, not a sample already
-// filtered toward favorites. `leg` matches the shape TrendFeed.jsx attaches
-// when a user manually adds this exact kind of leg (see predictionLog.js).
-function logTrendPrediction(t, o) {
-  recordPrediction({
-    sport: "mlb",
-    kind: "trend",
-    subjectId: t.player.id,
-    subjectName: t.player.name,
-    market: t.type,
-    side: o.side,
-    point: o.point,
-    predictedProb: o.trueProb,
-    marketProb: o.devigProb ?? null,
-    probSource: o.probSource ?? "devig",
-    leg: {
-      label: `${t.player.name} ${o.side}${o.point != null ? ` ${o.point}` : ""} (${t.type})`,
-      eventId: t.eventId,
-      commenceTime: t.commenceTime,
-      matchup: t.matchup,
-      market: t.type,
-      selection: `${o.side}${o.point != null ? ` ${o.point}` : ""}`,
-      americanOdds: o.price,
-      sport: "mlb",
-      context: {
-        kind: "trend",
-        trendType: t.type,
-        playerId: t.player.id,
-        playerName: t.player.name,
-        streakValue: t.streakValue,
-        matchupLabel: t.matchupLabel,
-        score: t.score,
-        propSide: o.side,
-        propPoint: o.point,
-      },
-    },
-  });
-}
-
-async function trendCandidates() {
+/**
+ * Top MLB trend candidates, each checked against real prop odds — bounded,
+ * see MAX_TREND_ODDS_CHECKS.
+ *
+ * Exported (only) so test/dailyParlayDateFilter.test.js can verify the
+ * today-only date filter directly, with `getTrendFeedFn`/`getTrendPropOddsFn`
+ * injected — both default to the real trends.js functions.
+ */
+export async function trendCandidates({ getTrendFeedFn = getTrendFeed, getTrendPropOddsFn = getTrendPropOdds } = {}) {
   const sport = SPORTS.mlb;
   let trends;
   try {
-    ({ trends } = await getTrendFeed(sport));
+    ({ trends } = await getTrendFeedFn(sport));
   } catch (err) {
     warn("trendCandidates", `getTrendFeed threw — ${err.message}`);
     return [];
   }
 
+  // Confirmed real bug (external review, Sept 2026): getTrendFeed()'s own
+  // window spans today AND tomorrow (see trends.js's gamesInWindow —
+  // hoursAhead defaults to 36h), which is the right behavior for the
+  // Trends tab itself (you want to see tomorrow's early games coming up),
+  // but wrong here for the same reason edgeCandidates() above already
+  // guards against it: a leg for a game tomorrow shouldn't be stacked into
+  // a parlay meant to resolve today. This function used to scan the RAW
+  // (today+tomorrow) trends list, unfiltered — reproduced: a September 3
+  // parlay build picked up a September 4 prop once tomorrow's odds lookup
+  // started working. Filter to today's local calendar day BEFORE slicing
+  // to MAX_TREND_ODDS_CHECKS, so tomorrow's trends don't also eat into the
+  // bounded odds-check budget ahead of today's real candidates.
+  const todaysTrends = trends.filter((t) => localDateKey(t.commenceTime) === todayKey());
+  if (todaysTrends.length !== trends.length) {
+    warn(
+      "trendCandidates",
+      `${trends.length - todaysTrends.length} of ${trends.length} trend(s) excluded — not today's date`
+    );
+  }
+
   const out = [];
-  for (const t of trends.slice(0, MAX_TREND_ODDS_CHECKS)) {
+  for (const t of todaysTrends.slice(0, MAX_TREND_ODDS_CHECKS)) {
     try {
-      const { available, reason, outcomes } = await getTrendPropOdds(sport, t.eventId, t.player.name, t.type);
+      const { available, reason, outcomes } = await getTrendPropOddsFn(sport, t.eventId, t.player.name, t.type);
       if (!available) {
         // Confirmed real bug: `available: false` almost always means "this
         // one trend's game didn't match an odds event" (a normal, expected
@@ -241,12 +227,16 @@ async function trendCandidates() {
         continue;
       }
 
-      // Log every priced outcome (Over and Under, favorite or not) before
-      // any of the eligibility/favorite filtering below narrows it down for
-      // the parlay build itself — see logTrendPrediction.
-      for (const o of outcomes) {
-        if (o.trueProb != null) logTrendPrediction(t, o);
-      }
+      // Confirmed real bug (external review, Sept 2026): prediction logging
+      // used to live HERE, in this one caller — so a user manually clicking
+      // "check odds" on a trend card (TrendFeed.jsx calls getTrendPropOdds()
+      // directly, bypassing this whole daily-parlay scan entirely) got a
+      // fully-priced result on screen that never reached predictionLog.jsonl.
+      // That's most of the app's real usage evading evaluation entirely,
+      // leaving only this bounded MAX_TREND_ODDS_CHECKS-per-day scan logged.
+      // Moved into getTrendPropOdds() itself (trends.js) — the actual shared
+      // pricing function every caller goes through — so every caller logs,
+      // not just this one.
 
       // "Over" is the natural side for every trend type this app builds
       // (continue the hit/RBI/HR streak, or clear the strikeout bar).

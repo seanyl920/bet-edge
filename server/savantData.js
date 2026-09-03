@@ -90,8 +90,19 @@ function parseCsv(text) {
   });
 }
 
+// Confirmed real bug (external review, Sept 2026): Number("") and
+// Number(" ") are both 0 — a genuinely finite number, so the old
+// `Number.isFinite(n) ? n : null` check let a blank CSV cell (Savant
+// omitting a stat for a player who didn't qualify for it, or any other
+// reason a cell comes back empty) through as a real, fabricated 0%
+// strikeout/walk/whiff rate instead of "unavailable." Reproduced with a
+// blank-field fixture. Trim and explicitly treat an empty string as no
+// value before ever calling Number() on it.
 function toNum(v) {
-  const n = Number(v);
+  if (v == null) return null;
+  const trimmed = String(v).trim();
+  if (trimmed === "") return null;
+  const n = Number(trimmed);
   return Number.isFinite(n) ? n : null;
 }
 

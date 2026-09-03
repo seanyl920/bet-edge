@@ -19,6 +19,14 @@ process.env.PREDICTION_LOG_FILE = path.join(dir, "predictionLog.jsonl");
 
 const { recordPrediction, readPredictionLog, MODEL_VERSION } = await import("../server/predictionLog.js");
 
+// A future timestamp, computed relative to whenever the tests actually
+// run — recordPrediction() now rejects a prediction whose commenceTime has
+// already passed (see the post-start-rejection tests below), so a
+// hardcoded past date would make every other test in this file fail too.
+function futureCommenceTime(msFromNow = 60 * 60 * 1000) {
+  return new Date(Date.now() + msFromNow).toISOString();
+}
+
 function baseRecord(overrides = {}) {
   return {
     sport: "mlb",
@@ -34,7 +42,7 @@ function baseRecord(overrides = {}) {
     leg: {
       label: "Test Player Over 1.5 (hitStreak)",
       eventId: "evt-1",
-      commenceTime: "2026-09-02T23:00:00Z",
+      commenceTime: futureCommenceTime(),
       matchup: "AAA @ BBB",
       market: "hitStreak",
       selection: "Over 1.5",
@@ -90,9 +98,86 @@ test("recordPrediction does NOT dedupe across a different side (Over vs Under)",
   assert.equal(records.length, 2);
 });
 
+test("recordPrediction does NOT dedupe across a different event — a doubleheader's two games are different predictions", async () => {
+  // Confirmed real bug: the dedup key used to omit the event id entirely,
+  // so the same player/market/side/point in TWO different games (the
+  // obvious real case: a doubleheader) collapsed into one record — the
+  // second game's genuinely distinct prediction was silently dropped.
+  await recordPrediction(baseRecord({ subjectId: "player-dh-1", leg: { ...baseRecord().leg, eventId: "evt-dh-game1" } }));
+  await recordPrediction(baseRecord({ subjectId: "player-dh-1", leg: { ...baseRecord().leg, eventId: "evt-dh-game2" } }));
+  const records = (await readPredictionLog()).filter((r) => r.subjectId === "player-dh-1");
+  assert.equal(records.length, 2, "two different games must both be logged, even with identical player/market/side/point");
+  const eventIds = records.map((r) => r.leg.eventId).sort();
+  assert.deepEqual(eventIds, ["evt-dh-game1", "evt-dh-game2"]);
+});
+
+test("recordPrediction's same-day dedup survives a server restart (not just in-memory)", async () => {
+  // Confirmed real bug: the in-memory Map was the ONLY dedup check — a
+  // restart lost it entirely, so the same prediction got re-appended on
+  // the next call post-restart. Simulates two separate process lifetimes
+  // against the SAME file (Node's module cache means re-importing within
+  // one process wouldn't actually reset the module's in-memory state, so
+  // this has to be two real child processes — same technique as the
+  // "file doesn't exist yet" test above).
+  const restartDir = await mkdtemp(path.join(tmpdir(), "predlog-restart-"));
+  const restartFile = path.join(restartDir, "predictionLog.jsonl");
+  const modulePath = JSON.stringify(path.join(__dirname, "..", "server", "predictionLog.js"));
+  const recordJson = JSON.stringify({
+    sport: "mlb",
+    kind: "trend",
+    subjectId: "player-restart-1",
+    market: "hitStreak",
+    side: "Over",
+    point: 1.5,
+    predictedProb: 0.6,
+    marketProb: 0.55,
+    probSource: "devig",
+    leg: { label: "x", eventId: "evt-restart-1", commenceTime: futureCommenceTime(), matchup: "AAA @ BBB", market: "hitStreak", selection: "Over 1.5", americanOdds: -120, sport: "mlb", context: {} },
+  });
+  const script = `
+    import { recordPrediction } from ${modulePath};
+    await recordPrediction(${recordJson});
+  `;
+  try {
+    // Process A: first "boot" of the server, logs the prediction once.
+    await execFileAsync(process.execPath, ["--input-type=module", "-e", script], {
+      env: { ...process.env, PREDICTION_LOG_FILE: restartFile },
+    });
+    // Process B: simulates a restart — same file, same prediction, same day.
+    await execFileAsync(process.execPath, ["--input-type=module", "-e", script], {
+      env: { ...process.env, PREDICTION_LOG_FILE: restartFile },
+    });
+
+    const raw = await readFile(restartFile, "utf-8");
+    const lines = raw.split("\n").filter(Boolean);
+    assert.equal(lines.length, 1, "the same prediction logged before and after a restart must still only appear once");
+  } finally {
+    await rm(restartDir, { recursive: true, force: true });
+  }
+});
+
 test("recordPrediction never throws even if the record is malformed", async () => {
   await assert.doesNotReject(() => recordPrediction({}));
   await assert.doesNotReject(() => recordPrediction(null).catch(() => {}));
+});
+
+test("recordPrediction rejects a prediction whose game has already started", async () => {
+  // Confirmed real bug: nothing checked whether the game had already
+  // started before logging a "pregame" prediction — reproduced a
+  // successful recording for an already-started game. This dataset exists
+  // specifically to compare PREGAME beliefs against outcomes; a post-start
+  // snapshot could already reflect in-play information.
+  const pastCommenceTime = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 1 hour ago
+  await recordPrediction(baseRecord({ subjectId: "player-poststart-1", leg: { ...baseRecord().leg, commenceTime: pastCommenceTime } }));
+  const records = (await readPredictionLog()).filter((r) => r.subjectId === "player-poststart-1");
+  assert.equal(records.length, 0, "a prediction for a game already underway must not be logged");
+});
+
+test("recordPrediction accepts a prediction right up to the moment before commence time", async () => {
+  const soonCommenceTime = new Date(Date.now() + 60 * 1000).toISOString(); // 1 minute from now
+  await recordPrediction(baseRecord({ subjectId: "player-prestart-1", leg: { ...baseRecord().leg, commenceTime: soonCommenceTime } }));
+  const records = (await readPredictionLog()).filter((r) => r.subjectId === "player-prestart-1");
+  assert.equal(records.length, 1, "a genuinely pregame prediction, even seconds before first pitch, must still be logged");
 });
 
 test("readPredictionLog skips a malformed line instead of failing the whole read", async () => {

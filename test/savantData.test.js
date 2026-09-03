@@ -45,6 +45,16 @@ const AMBIGUOUS_BATTER_CSV = `"last_name, first_name","player_id","year","k_perc
 "Bichette, Bo",666182,2026,18.2,6.5,19.5,6.1
 `;
 
+// A blank k_percent cell, a whitespace-only bb_percent cell, and a blank
+// (trailing-comma) barrel_batted_rate — the exact reproduction of the
+// reviewer's finding: Number("") and Number(" ") are both 0, a real,
+// finite number, so an unfixed toNum() would report these as fabricated
+// 0% rates instead of "unavailable."
+const BLANK_FIELD_CSV = `"last_name, first_name","player_id","year","k_percent","bb_percent","whiff_percent","barrel_batted_rate"
+"Player, Blank",999999,2026,, ,25.0,
+"Bichette, Bo",666182,2026,18.2,6.5,19.5,6.1
+`;
+
 function stubCsv(csvText) {
   clearCache("savant:");
   globalThis.fetch = async (url) => ({ ok: true, text: async () => csvText });
@@ -61,6 +71,20 @@ test("getBatterProfileByName parses real Savant CSV rows and matches by name, co
   assert.equal(profile.barrelRate, 6.1);
   assert.equal(profile.source, "baseball-savant-custom-leaderboard");
   assert.equal(profile.splitByHandedness, false);
+});
+
+test("getBatterProfileByName treats blank/whitespace-only CSV cells as null, never a fabricated 0", async () => {
+  stubCsv(BLANK_FIELD_CSV);
+  const profile = await getBatterProfileByName("Blank Player");
+  assert.ok(profile);
+  assert.equal(profile.kPercent, null, "an empty cell must be null, not 0");
+  assert.equal(profile.bbPercent, null, "a whitespace-only cell must be null, not 0");
+  assert.equal(profile.whiffPercent, 25, "a real value in the same row must still parse correctly");
+  assert.equal(profile.barrelRate, null, "a trailing blank cell must be null, not 0");
+
+  // A real, complete row in the SAME response must be unaffected.
+  const bo = await getBatterProfileByName("Bo Bichette");
+  assert.equal(bo.kPercent, 18.2);
 });
 
 test("getBatterProfileByName is case/diacritic-insensitive but still an exact full-name match", async () => {

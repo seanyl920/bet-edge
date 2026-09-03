@@ -27,6 +27,7 @@ import { getBatterProfileByName, getPitcherProfileByName } from "./savantData.js
 import { localDateKey } from "./dateUtil.js";
 import { cached } from "./cache.js";
 import { americanToDecimal, devigMultiplicative, round } from "./oddsMath.js";
+import { recordPrediction } from "./predictionLog.js";
 
 const HIT_STREAK_MIN = 5;
 const RBI_STREAK_MIN = 3;
@@ -349,11 +350,25 @@ export async function pitcherKTrends({ event, pitcher, pitcherTeamName, oppTeamI
   const daysRest =
     lastStart && !Number.isNaN(lastStart.getTime()) ? Math.round((gameDate - lastStart) / (24 * 60 * 60 * 1000)) : null;
 
-  // Only trust the confirmed role if it's actually for THIS pitcher — a
-  // late scratch/substitution would mean the confirmed lineup's starter and
-  // the "probable" pitcher this trend was built from are two different
-  // people, and misattributing one's role to the other would be worse than
-  // just not knowing.
+  // Confirmed real bug (external review, Sept 2026): when the confirmed
+  // lineup's starter and the "probable" pitcher this trend was built from
+  // disagree — a real, live substitution/scratch, not a hypothetical — the
+  // old code only suppressed the ROLE LABEL (set it to null) and then kept
+  // right on generating a full K-streak recommendation for `pitcher`, the
+  // apparently-superseded probable, with no warning at all. Reproduced: a
+  // normal-looking recommendation for a pitcher a confirmed source says
+  // isn't actually starting. A stale probable-pitcher trend is actively
+  // misleading here, not just "less confident" — suppress it entirely
+  // (this app's usual answer to "the data disagrees with itself") rather
+  // than label around the disagreement and recommend it anyway.
+  const starterConflict = startingPitcherRole != null && startingPitcherRole.id !== String(pitcher.id);
+  if (starterConflict) {
+    console.warn(
+      `[trends] pitcherKTrends: confirmed starter for ${pitcherTeamName} (id ${startingPitcherRole.id}) does not match probable pitcher ${pitcher.name} (id ${pitcher.id}) — suppressing this trend rather than recommending a pitcher who appears to have been scratched.`
+    );
+    return [];
+  }
+
   const role = startingPitcherRole?.id === String(pitcher.id) ? startingPitcherRole.role : null;
   const isOpenerRole = role != null && role !== "SP";
 
@@ -569,12 +584,78 @@ function attachDevigProbs(outcomes) {
   return outcomes;
 }
 
+// Logs every priced Over/Under outcome for a trend — not just whatever a
+// caller ends up choosing — so a later evaluation sees the full
+// distribution of what this app priced, not a sample already filtered
+// toward favorites or toward one particular caller's needs. `leg` matches
+// the shape TrendFeed.jsx attaches when a user manually adds this exact
+// kind of leg (see predictionLog.js).
+//
+// Confirmed real bug (found while testing the fix above): this used to
+// call recordPrediction() without awaiting it — fire-and-forget. In
+// dailyParlay.js's old call site that "worked" by accident (plenty of
+// other awaited work happened before the response was sent, giving the
+// write time to finish), but it's not a real guarantee, and a caller with
+// less going on afterward (or a fast subsequent read, e.g. by
+// predictionEval.js moments later) could race the write. async + awaited
+// at both call sites below.
+async function logTrendPrediction(t, o) {
+  await recordPrediction({
+    sport: "mlb",
+    kind: "trend",
+    subjectId: t.player.id,
+    subjectName: t.player.name,
+    market: t.type,
+    side: o.side,
+    point: o.point,
+    predictedProb: o.trueProb,
+    marketProb: o.devigProb ?? null,
+    probSource: o.probSource ?? "devig",
+    leg: {
+      label: `${t.player.name} ${o.side}${o.point != null ? ` ${o.point}` : ""} (${t.type})`,
+      eventId: t.eventId,
+      commenceTime: t.commenceTime,
+      matchup: t.matchup,
+      market: t.type,
+      selection: `${o.side}${o.point != null ? ` ${o.point}` : ""}`,
+      americanOdds: o.price,
+      sport: "mlb",
+      context: {
+        kind: "trend",
+        trendType: t.type,
+        playerId: t.player.id,
+        playerName: t.player.name,
+        streakValue: t.streakValue,
+        matchupLabel: t.matchupLabel,
+        score: t.score,
+        propSide: o.side,
+        propPoint: o.point,
+      },
+    },
+  });
+}
+
 /**
  * On-demand player-prop odds for one trend. Only call this from an explicit
  * user action ("check odds") — never automatically — since player props are
  * a separate, credit-costing call on The Odds API per event.
+ *
+ * Confirmed real bug (external review, Sept 2026): prediction logging used
+ * to live only in dailyParlay.js's bounded daily scan, one specific caller
+ * of this function — so a user manually clicking "check odds" on a trend
+ * card (TrendFeed.jsx calls this directly) got a fully-priced result on
+ * screen that never reached predictionLog.jsonl, leaving evaluation
+ * missing most of what this app actually prices in real usage. Logging now
+ * lives HERE — the actual shared pricing function every caller goes
+ * through — so every caller logs, not just one.
+ *
+ * `getTrendFeedFn` defaults to this module's real getTrendFeed (which
+ * rebuilds the whole trend feed on a cache miss — a lot of ESPN/Savant
+ * calls) — overridable so tests can supply a stub trend list directly
+ * instead of exercising that entire pipeline just to test this function's
+ * own logging/pricing logic.
  */
-export async function getTrendPropOdds(sport, espnEventId, playerName, trendType) {
+export async function getTrendPropOdds(sport, espnEventId, playerName, trendType, { getTrendFeedFn = getTrendFeed } = {}) {
   const marketKey = PROP_MARKET[trendType];
   if (!marketKey) {
     const err = new Error(`No prop market mapped for trend type "${trendType}"`);
@@ -654,6 +735,26 @@ export async function getTrendPropOdds(sport, espnEventId, playerName, trendType
     } else if (o.trueProb != null) {
       o.probSource = "devig";
     }
+  }
+
+  // Look up the full trend this pricing is for (playerId, streak/matchup
+  // context, commenceTime) from the already-built, already-cached trend
+  // feed — cheap (a Map/array lookup against a 15-min cache, not a new
+  // ESPN round trip) since any caller of this function only ever got here
+  // from a trend the feed already returned. Best-effort: if the trend
+  // can't be found (feed cache expired between page load and this click,
+  // an edge case) or logging itself fails, that must never break the odds
+  // check a user is actively waiting on.
+  try {
+    const { trends } = await getTrendFeedFn(sport);
+    const trend = trends.find((t) => t.eventId === espnEventId && t.type === trendType && t.player.name === playerName);
+    if (trend) {
+      for (const o of outcomes) {
+        if (o.trueProb != null) await logTrendPrediction(trend, o);
+      }
+    }
+  } catch {
+    // best-effort — never break the odds check itself over a logging failure
   }
 
   return { available: true, outcomes };

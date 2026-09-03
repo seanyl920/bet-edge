@@ -634,6 +634,112 @@ with a fixture first:
   warning the server generated was simply invisible on this specific
   screen. Confirmed the server producing one that never reached the
   rendered output. Fixed: renders the same list, the same way.
+- **Round 6 (external review of the prospective-evaluation/Priority-1-3
+  work, Sept 2026) — 8 confirmed findings, all reproduced against the
+  actual code before fixing, all fixed:**
+  1. **The model-vs-market Brier comparison could name the wrong winner.**
+     `predictionEval.js`'s two scores each filtered to their OWN field
+     being non-null, independently — so they could (and in a reproduced
+     fixture, did) score two *different* subsets of predictions and
+     disagree with what the shared subset actually showed: the fixture's
+     independent scores said model 0.036 vs. market 0.25 (model looks far
+     better), while the same data scored model 0.36 on the predictions
+     both scores could actually be computed on — the market was better
+     there, the opposite conclusion. Fixed: added `comparison` — both
+     scores computed on exactly the matched-field subset, with its own `n`
+     reported — as the field an evaluation should actually read; the two
+     independent scores are kept as separate "how calibrated is this
+     model/market on its own" diagnostics, explicitly documented as not
+     comparable to each other.
+  2. **Calibration counted duplicate bet-log entries as independent
+     samples.** Nothing deduped `getCalibration()`'s bucket counts by the
+     underlying real-world occurrence — since `addBet()` has no dedup
+     either, logging (or re-logging, e.g. a retried request) the identical
+     prop multiple times inflated `n` every time. Reproduced: 15 copies of
+     one winning prop produced a "calibrated" 100% rate at n=15 — one
+     observed outcome, not 15 independent examples. Fixed: dedupes by
+     (eventId, player/side/market/threshold) before counting — genuinely
+     independent repeats (the same bet type on 15 *different* games) still
+     each count; only exact duplicates of one real occurrence collapse.
+     Left uncollapsed (never guessed) when eventId is missing, since two
+     different games that both lack one can't be told apart.
+  3. **Prediction logging dropped distinct games and duplicated records
+     after restarts.** `predictionLog.js`'s dedup key omitted the event id
+     — two different games with the same player/market/side/point on the
+     same day (a doubleheader) collapsed into one record, silently
+     dropping the second game's real prediction. Separately, the "already
+     logged today" check was in-memory only, so a server restart forgot it
+     entirely and re-appended the same prediction on the next call. Both
+     reproduced. Fixed: the key now includes the event id; a new
+     `ensureLoggedTodayLoaded()` lazily rebuilds the in-memory index from
+     the file itself the first time the module is used in a process, so a
+     restart can't forget what's already on disk.
+  4. **A prediction could be logged after the game had already started.**
+     Neither logging nor evaluation checked whether a prediction was
+     recorded before its game began — every caller filters to
+     `STATUS_SCHEDULED` first, but that scoreboard read is cached for up
+     to 5 minutes, so a game that started 2 minutes ago could still read
+     as scheduled. Reproduced: a prediction for an already-started game
+     got recorded successfully. Fixed: `recordPrediction()` now rejects a
+     snapshot whose `leg.commenceTime` has already passed at write time
+     (the actual scheduled time is a hard fact, independent of any cached
+     status field); `evaluatePredictions()` also independently excludes
+     any record whose `recordedAt` is at or after its own `commenceTime`,
+     as defense in depth against a record that predates this fix or
+     reached the file some other way.
+  5. **Manually-checked player props never reached the prediction log.**
+     Logging lived only inside `dailyParlay.js`'s bounded daily scan —
+     `TrendFeed.jsx`'s "check odds" button calls `getTrendPropOdds()`
+     directly, the actual shared pricing function, and got a fully-priced
+     result on screen that never reached `predictionLog.jsonl`. That's
+     most of this app's real usage evading evaluation entirely. Fixed:
+     logging moved into `getTrendPropOdds()` itself (with an injectable
+     `getTrendFeedFn` for testability), so every caller logs, not just
+     one; the now-redundant call in `dailyParlay.js` was removed. Found
+     and fixed alongside this: `logTrendPrediction()`/`logEdgePrediction()`
+     were both calling `recordPrediction()` without awaiting it —
+     fire-and-forget, racing any read that happened shortly after (this
+     "worked" by accident in the old call sites, which happened to do
+     other awaited work afterward, but a fast caller — or this fix's own
+     test — could genuinely race it). Both are now `async` and awaited at
+     every call site.
+  6. **Tomorrow's props could enter today's daily parlay.**
+     `edgeCandidates()` filters to today's local calendar day;
+     `trendCandidates()` had no equivalent filter and scanned the full
+     36-hour (today+tomorrow) trend window unfiltered. Reproduced: a
+     September 3 build picked up a September 4 prop once tomorrow's odds
+     lookup started working. Fixed: same today-only filter, applied before
+     slicing to the bounded per-day odds-check budget so tomorrow's trends
+     don't also eat into it ahead of today's real candidates.
+  7. **Missing Savant statistics became real zeros.** `Number("")` and
+     `Number(" ")` are both `0` — a genuinely finite number — so a blank
+     CSV cell (Savant omitting a stat for a player who didn't qualify for
+     it, for instance) came through as a fabricated 0% K/BB/whiff rate
+     instead of "unavailable," which could distort a derived stat like
+     K-BB%. Reproduced with a blank-field fixture. Fixed: `toNum()` now
+     trims and explicitly treats an empty string as no value before ever
+     calling `Number()` on it.
+  8. **A confirmed starter conflicting with the probable pitcher was
+     silently discarded, and the stale trend generated anyway.** When the
+     confirmed lineup's starter and the "probable" pitcher a K-streak
+     trend was built from disagreed (a real, live substitution/scratch),
+     the old code suppressed only the role *label* (set it to `null`) and
+     kept generating a normal-looking recommendation for the apparently-
+     superseded probable — no warning at all. Reproduced: a clean K-streak
+     recommendation for a pitcher a confirmed source says isn't actually
+     starting. Fixed: a genuine id mismatch (confirmed role found, but for
+     a *different* pitcher) now suppresses the trend entirely and logs a
+     warning — this app's usual answer to "the data disagrees with
+     itself" — rather than recommending a pitcher who appears to have been
+     scratched. "Nothing confirmed yet" (the normal pregame state) is
+     still handled exactly as before — this only changes the genuine-
+     conflict case.
+
+  All 8 verified with new/extended tests (50 total passing, up from 33),
+  `node --check` on every touched file, `npm run build`, a server boot
+  test hitting `/api/health`, `/api/predictions/eval`, and
+  `/api/calibration` directly, and `data/bets.json` confirmed unchanged
+  throughout.
 
 ## Daily longshot parlay
 

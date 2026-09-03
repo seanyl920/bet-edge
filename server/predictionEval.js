@@ -34,6 +34,27 @@ function brierScore(rows, probField) {
   return total / scored.length;
 }
 
+// Confirmed real bug (external review, Sept 2026): modelBrierScoreAllRows
+// and marketBrierScoreAllRows below each filter to their OWN field being
+// non-null, independently — so they can (and in a reproduced fixture, did)
+// score two DIFFERENT subsets of predictions and disagree with what the
+// numbers looked like on the predictions they actually share. A reviewer's
+// fixture reported model 0.036 vs market 0.25 (model looks much better) on
+// the independent scores, while the SAME data scored model 0.36 on just the
+// rows both scores could actually be computed on — the market was better
+// there, the opposite conclusion. Comparing "beats the market" requires
+// scoring both sides on the exact same predictions — see `comparison` below,
+// which is the field an evaluation should actually read to answer that
+// question. The two *AllRows fields are kept as separate diagnostics (how
+// well-calibrated is this app's own probability, full stop; same for the
+// market's) — deliberately NOT presented as comparable to each other.
+function matchedBrierComparison(rows) {
+  const matched = rows.filter((r) => r.predictedProb != null && r.marketProb != null);
+  if (!matched.length) return { n: 0, modelBrierScore: null, marketBrierScore: null };
+  const scoreFor = (field) => matched.reduce((s, r) => s + (r[field] - (r.hit ? 1 : 0)) ** 2, 0) / matched.length;
+  return { n: matched.length, modelBrierScore: round(scoreFor("predictedProb")), marketBrierScore: round(scoreFor("marketProb")) };
+}
+
 function groupKey(r) {
   return [r.modelVersion, r.sport, r.kind, r.market].join("|");
 }
@@ -50,14 +71,21 @@ function summarizeGroup(rows) {
     hitRate: round(avg(rows.map((r) => (r.hit ? 1 : 0)))),
     avgPredictedProb: round(avg(rows.map((r) => r.predictedProb))),
     avgMarketProb: round(avg(rows.map((r) => r.marketProb))),
-    // Brier score of THIS app's stated probability vs. what actually
-    // happened, and the same score for the market's own devigged
-    // probability at prediction time — the two are directly comparable
-    // (both scored against the same realized outcomes), which is what lets
-    // this eventually say "beats the market" or "doesn't" instead of
-    // asserting it.
-    modelBrierScore: round(brierScore(rows, "predictedProb")),
-    marketBrierScore: round(brierScore(rows, "marketProb")),
+    // Each scored over its OWN available rows — NOT necessarily the same
+    // predictions, so these two are not directly comparable to each other
+    // (see matchedBrierComparison's comment above for why that matters and
+    // what went wrong when this app first tried to compare them directly).
+    // Read these as "how calibrated is the model, on its own" / "how
+    // calibrated is the market, on its own."
+    modelBrierScoreAllRows: round(brierScore(rows, "predictedProb")),
+    marketBrierScoreAllRows: round(brierScore(rows, "marketProb")),
+    // THE fair comparison: both scores computed on exactly the same set of
+    // predictions (only rows with both a model AND a market probability).
+    // This — not the two fields above — is what should decide "beats the
+    // market" or "doesn't." `n` here can be smaller than the group's total
+    // `n` above; a comparison built on very few matched rows isn't worth
+    // much either, so check `comparison.n` before trusting it.
+    comparison: matchedBrierComparison(rows),
   };
 }
 
@@ -74,13 +102,26 @@ function summarizeGroup(rows) {
 export async function evaluatePredictions({ analyzeBetFn = analyzeBet } = {}) {
   const records = await readPredictionLog();
   const graded = [];
-  const ungradedReasons = { notFinalOrMissing: 0, gradingThrew: 0, noLeg: 0 };
+  const ungradedReasons = { notFinalOrMissing: 0, gradingThrew: 0, noLeg: 0, postStart: 0 };
 
   for (const record of records) {
     if (!record.leg) {
       ungradedReasons.noLeg++;
       continue;
     }
+
+    // Defense in depth for the same "no post-start snapshots" rule
+    // predictionLog.js enforces when a record is written (see its
+    // recordPrediction) — catches a record that predates that fix, or
+    // reached the file some other way, rather than trusting every stored
+    // record was necessarily pregame.
+    const commenceMs = record.leg.commenceTime ? new Date(record.leg.commenceTime).getTime() : NaN;
+    const recordedMs = record.recordedAt ? new Date(record.recordedAt).getTime() : NaN;
+    if (!Number.isNaN(commenceMs) && !Number.isNaN(recordedMs) && recordedMs >= commenceMs) {
+      ungradedReasons.postStart++;
+      continue;
+    }
+
     let result;
     try {
       result = await analyzeBetFn({ sport: record.sport, legs: [record.leg] });
