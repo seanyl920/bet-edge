@@ -87,8 +87,17 @@ function pctStr(p) {
   return p == null ? "—" : `${Math.round(p * 100)}%`;
 }
 
-/** Every priced moneyline/spread side across every sport, not just the ones that clear an EV threshold — we want the full "favorites" universe here, not just flagged edges. Reuses the already-cached bulk odds fetch, so this costs no extra API credits. */
-async function edgeCandidates() {
+/**
+ * Every priced moneyline/spread side across every sport, not just the ones
+ * that clear an EV threshold — we want the full "favorites" universe here,
+ * not just flagged edges. Reuses the already-cached bulk odds fetch, so
+ * this costs no extra API credits.
+ *
+ * Exported (also) so bestBets.js can build a real, EV-ranked "today's best
+ * single bets" list from the same underlying candidate pool, without a
+ * separate ESPN/Odds-API fetch of its own.
+ */
+export async function edgeCandidates() {
   const out = [];
   for (const sport of Object.values(SPORTS)) {
     try {
@@ -150,6 +159,14 @@ async function edgeCandidates() {
           trueProb: e.blendedProb,
           probSource: "elo-blended",
           decimalOdds: americanToDecimal(e.americanOdds),
+          // makeEdge() already computes this correctly — including, for a
+          // spread, the pushProb-aware EV (see elo.js's pushProbability) —
+          // so forward it rather than recomputing a plain (no-push) EV
+          // here that would silently regress that fix for spread legs.
+          // Additive only: existing consumers of this candidate shape
+          // (assembleTowardTarget below) don't read these fields.
+          ev: e.ev,
+          evPct: e.evPct,
           reason:
             e.marketProb != null
               ? `Elo (${e.sampleSize}-game sample) has ${e.team} at ${pctStr(e.modelProb)}, market consensus ${pctStr(e.marketProb)} — blended to ${pctStr(e.blendedProb)}.`

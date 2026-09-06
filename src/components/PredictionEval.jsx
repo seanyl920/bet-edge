@@ -48,7 +48,9 @@ export default function PredictionEval() {
         comparison — both this app's own Brier score and the market's, computed on only the predictions where
         both a model and a market probability exist (see the <code>n</code> in that column, which can be
         smaller than the group's total — a comparison built on a handful of matched rows isn't worth much
-        either).
+        either). "Promotable" (see <code>server/modelRegistry.js</code>) is a recommendation, never automatic —
+        it only ever suggests that a probSource has enough matched volume and a good enough Brier score to be
+        worth manually wiring in as the price a real bet actually uses; nothing here flips that on its own.
       </p>
 
       {loading && <p className="muted">Loading…</p>}
@@ -96,6 +98,7 @@ export default function PredictionEval() {
                 <th>vs market (n)</th>
                 <th>Model Brier</th>
                 <th>Market Brier</th>
+                <th>Promotable?</th>
               </tr>
             </thead>
             <tbody>
@@ -112,6 +115,13 @@ export default function PredictionEval() {
                   <td>{g.comparison.n}</td>
                   <td>{brier(g.comparison.modelBrierScore)}</td>
                   <td>{brier(g.comparison.marketBrierScore)}</td>
+                  <td title={g.promotion?.reason}>
+                    {g.promotion?.promotable ? (
+                      <span className="badge badge-ok">yes</span>
+                    ) : (
+                      <span className="badge badge-mid">no</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

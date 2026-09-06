@@ -28,6 +28,7 @@ import { localDateKey } from "./dateUtil.js";
 import { cached } from "./cache.js";
 import { americanToDecimal, devigMultiplicative, round } from "./oddsMath.js";
 import { recordPrediction } from "./predictionLog.js";
+import { expectedStrikeouts, poissonPropProbabilities } from "./propModel.js";
 
 const HIT_STREAK_MIN = 5;
 const RBI_STREAK_MIN = 3;
@@ -372,6 +373,15 @@ export async function pitcherKTrends({ event, pitcher, pitcherTeamName, oppTeamI
   const role = startingPitcherRole?.id === String(pitcher.id) ? startingPitcherRole.role : null;
   const isOpenerRole = role != null && role !== "SP";
 
+  // A real, first-principles probability model (see propModel.js) for
+  // strikeout props — built alongside the devig/calibration numbers that
+  // actually price a bet, not replacing them. `null` (never guessed) when
+  // there aren't enough recent real starts to trust a rolling rate; an
+  // opener/bulk role makes this specific pitcher's OWN recent full-start
+  // log a poor predictor of today's much shorter outing, so the model is
+  // suppressed there too rather than silently misapplied.
+  const poisson = !isOpenerRole ? expectedStrikeouts(log) : null;
+
   const workloadNotes = [];
   if (isOpenerRole) workloadNotes.push(`confirmed today's role is ${role}, not a traditional start — real strikeout opportunity is likely much lower`);
   if (daysRest != null && daysRest < SHORT_REST_DAYS) workloadNotes.push(`pitching on ${daysRest} days rest (short for a starter)`);
@@ -394,6 +404,10 @@ export async function pitcherKTrends({ event, pitcher, pitcherTeamName, oppTeamI
       daysRest,
       confirmedRole: role,
       workloadNote: workloadNotes.length ? workloadNotes.join("; ") : null,
+      // See propModel.js — a genuine Poisson strikeout model built from
+      // this pitcher's own recent (SO, IP) log, kept separate from
+      // whatever actually prices a bet (devig/calibration below).
+      poisson,
       savant: savant
         ? {
             kPercent: savant.kPercent,
@@ -751,6 +765,22 @@ export async function getTrendPropOdds(sport, espnEventId, playerName, trendType
     if (trend) {
       for (const o of outcomes) {
         if (o.trueProb != null) await logTrendPrediction(trend, o);
+      }
+      // Challenger tracking (see modelRegistry.js): log the SAME outcomes'
+      // Poisson-implied probability too, under its own probSource — a
+      // separate, honestly-graded track record, never used to override
+      // the devig/calibration price a bet actually uses above. This is
+      // what lets /api/predictions/eval eventually say whether this model
+      // is worth trusting, with real graded numbers instead of an
+      // assertion.
+      if (trend.poisson) {
+        for (const o of outcomes) {
+          const priced = poissonPropProbabilities(trend.poisson.lambda, o.point);
+          if (!priced) continue;
+          const poissonProb = o.side === "Over" ? priced.over : o.side === "Under" ? priced.under : null;
+          if (poissonProb == null) continue;
+          await logTrendPrediction(trend, { ...o, trueProb: poissonProb, probSource: "poisson" });
+        }
       }
     }
   } catch {

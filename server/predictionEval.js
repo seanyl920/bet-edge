@@ -19,6 +19,7 @@
 import { readPredictionLog } from "./predictionLog.js";
 import { analyzeBet } from "./postmortem.js";
 import { round } from "./oddsMath.js";
+import { promotionStatus } from "./modelRegistry.js";
 
 function avg(values) {
   const nums = values.filter((v) => typeof v === "number" && !Number.isNaN(v));
@@ -102,6 +103,12 @@ function summarizeGroup(rows) {
   };
 }
 
+function withPromotion(group) {
+  // See modelRegistry.js — a recommendation only, never an automatic
+  // switch of what actually prices a real bet.
+  return { ...group, promotion: promotionStatus(group) };
+}
+
 /**
  * Grade every logged prediction whose game is decidable by now, and
  * aggregate the results. A record that can't be graded yet (game not
@@ -163,6 +170,6 @@ export async function evaluatePredictions({ analyzeBetFn = analyzeBet } = {}) {
     totalLogged: records.length,
     totalGraded: graded.length,
     ungradedReasons,
-    groups: [...byGroup.values()].map(summarizeGroup).sort((a, b) => b.n - a.n),
+    groups: [...byGroup.values()].map(summarizeGroup).map(withPromotion).sort((a, b) => b.n - a.n),
   };
 }

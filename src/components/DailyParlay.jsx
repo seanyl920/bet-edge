@@ -135,6 +135,7 @@ export default function DailyParlay({ onAddLeg }) {
             ))}
           </div>
 
+          <div className="table-wrap">
           <table className="edge-table">
             <thead>
               <tr>
@@ -177,6 +178,7 @@ export default function DailyParlay({ onAddLeg }) {
               ))}
             </tbody>
           </table>
+          </div>
 
           <button className="primary" onClick={addAllToSlip}>
             Add all {data.legs.length} legs to slip

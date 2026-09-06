@@ -854,6 +854,127 @@ with a fixture first:
   server file, `npm run build`, a server boot test hitting
   `/api/calibration` and `/api/predictions/eval` directly, and
   `data/bets.json`/`data/predictionLog.jsonl` confirmed clean throughout.
+- **Round 7 follow-up: the same review's mobile-layout verdict and product-
+  direction roadmap, built (not just fixed) once the correctness findings
+  above were done.**
+  - **Mobile layout was broken at 390px (the reviewer's own test width),
+    two compounding failures.** `.app-main` was a plain flex row with
+    `.app-slip` fixed at 320px — on a 390px screen that left effectively
+    no room for the actual feed content next to it. Separately, only 2 of
+    6 data tables (`GameDetail.jsx`'s odds table, and this round's new
+    `PredictionEval.jsx`) had a horizontal-scroll wrapper — the bet log
+    (10 columns), edge feed (10 columns), daily parlay, and calibration
+    tables had none, so a narrow viewport either forced the whole page to
+    scroll sideways or squeezed every column unreadably. Fixed: a
+    `max-width: 760px` media query stacks the slip below the feed instead
+    of beside it, and every data table now gets the same scroll-within-
+    its-own-box wrapper (verified with real Playwright screenshots at
+    390×844, not just reasoning about the CSS — see the Edge feed, Bet
+    log, Calibration, and Model eval tabs all render correctly stacked and
+    scrollable). This is a "no longer broken" fix, not a from-scratch
+    mobile redesign.
+  - **"Today's best bets" (`server/bestBets.js`, `TodaysBets.jsx`) — the
+    direct fix for the review's core math complaint.** The daily parlay
+    stacks favorites toward a big payout; 10 legs at ~60% each compounds
+    to under 1% combined, which reads as confidence but is actually a
+    lottery ticket. Built a genuinely different feature, not a rebrand:
+    reuses the same candidate pool (no extra API calls), filters to
+    positive-EV single bets only, ranks by EV, and **never combines
+    anything** — every recommendation is meant to be placed on its own.
+    Now the default landing tab; the old daily parlay is kept (renamed
+    "Longshot parlay") as the honestly-labeled recreational product it
+    always was, not removed.
+  - **A real prop probability model (`server/propModel.js`), not just
+    devig/calibration.** Added a Poisson strikeout model built entirely
+    from a pitcher's own real recent game log (rolling innings-pitched ×
+    strikeouts-per-inning) — the textbook count-distribution approach, no
+    invented inputs. Disclosed, not fabricated away: real strikeout counts
+    run somewhat overdispersed relative to a pure Poisson, and a
+    negative-binomial refinement would need a dispersion parameter this
+    app has no graded volume to fit yet — so it stays plain Poisson and
+    says so, shown as an extra line on `TrendFeed.jsx`'s pitcherK cards.
+  - **A concrete challenger/promote mechanism (`server/modelRegistry.js`),
+    not an automatic model swap.** The Poisson model's probability is
+    logged under its own `probSource: "poisson"` tag — a separate, fairly
+    graded track record, never substituted for the price a real bet uses.
+    (This needed `predictionLog.js`'s dedupe key to gain a `probSource`
+    segment too — without it, logging the devig prediction first would
+    have silently blocked the poisson one from ever being written for the
+    same line, a real bug caught by this round's own new integration
+    test.) A promotion gate (30+ matched, graded predictions AND a Brier
+    score beating the market's) surfaces as a "Promotable?" column on the
+    Model eval tab — a recommendation only. Nothing in this app
+    automatically starts pricing real bets off an unproven model; wiring
+    a promoted `probSource` into `trends.js`/`edges.js` is a manual,
+    human decision, the same way every other model change here has been.
+  - **Tabs reordered around decision-oriented questions**, per the
+    review's "what I would build next": "Today's bets" now opens the app;
+    research feeds (Edge feed, Trends, Games) come next; "Longshot
+    parlay," Bet log, Calibration, and Model eval close it out. This is a
+    reordering/relabeling, not the full ground-up product redesign the
+    review sketched — existing tabs and their behavior are unchanged.
+
+  All of the above verified with new tests (105 total passing, up from
+  75 — first-ever coverage for `propModel.js`, `modelRegistry.js`, and
+  `bestBets.js`), `node --check` on every touched server file, `npm run
+  build`, a server boot test hitting `/api/best-bets` and
+  `/api/predictions/eval` directly, real Playwright screenshots at both
+  desktop and 390px mobile widths, and `data/bets.json`/
+  `data/predictionLog.jsonl` confirmed clean throughout.
+
+## Today's best bets
+
+The app's default landing tab, and the direct answer to a real math problem
+with the daily longshot parlay below: stacking 10 favorites at ~60% each
+compounds to well under 1% combined probability — not "a confident day,"
+a lottery ticket wearing a favorites costume, no matter how good each leg
+looks alone (see the daily-parlay section's own framing, which has always
+said this honestly). "Today's best bets" (`server/bestBets.js`, `GET
+/api/best-bets`) does the opposite on purpose: it **never combines
+anything**. It reuses the exact same candidate pool the daily parlay
+scans (`edgeCandidates()`/`trendCandidates()` — no extra ESPN/Odds-API
+calls), filters to genuinely positive-EV single bets only, and ranks them
+by EV — each one meant to be placed on its own, at its own real price,
+logged and graded the same way as anything else added manually. The old
+daily parlay is still there (renamed "Longshot parlay" in the tab bar) —
+it's a real, honestly-labeled recreational product, just no longer what
+the app opens on or implies is its primary recommendation.
+
+## Prop probability models (Poisson challenger)
+
+Every prop probability this app produced before this round came from
+either a devigged market line or this app's own graded-history
+calibration — both need a real market line or real graded volume to exist
+at all. `server/propModel.js` adds a genuine, first-principles statistical
+model for one count prop this app already has real per-game exposure/
+outcome data for: pitcher strikeouts. Expected strikeouts (`lambda`) is
+built entirely from a pitcher's own real recent game log — a rolling
+innings-pitched average times a rolling strikeouts-per-inning rate, no
+invented inputs — modeled as a Poisson count distribution (the textbook
+choice for a count of successes over at-bats faced). A disclosed, not
+fabricated-away, limitation: real strikeout counts run somewhat
+overdispersed relative to a pure Poisson — well documented in public
+sabermetrics writing — and a negative-binomial refinement would need a
+dispersion parameter fit to this app's own graded history, which doesn't
+exist yet in real volume. Rather than invent one, this stays plain
+Poisson and says so, the same "baseline, not finished" framing as this
+app's Elo model.
+
+This is a **challenger**, not a replacement: `trends.js`'s
+`getTrendPropOdds()` logs the Poisson-implied probability under its own
+`probSource: "poisson"` tag, alongside (never overriding) whatever
+actually prices the bet a user sees. `server/modelRegistry.js` defines the
+concrete promotion gate this project's "challenger/promote" ask needed: a
+`probSource` becomes "promotable" only once it has `MIN_PROMOTION_N` (30)
+matched, graded predictions AND a Brier score that beats or ties the
+devigged market's, over that same matched set — surfaced as a column on
+the Model eval tab. This is a **recommendation only** — nothing here ever
+automatically starts pricing a real bet with an unproven model; that
+decision is a human reading the recommendation and manually wiring a new
+`probSource` into `trends.js`/`edges.js`, the same way every other model
+change in this app has been made. Automating that flip would mean the app
+silently starts pricing real-money bets off a model whose "it's better"
+claim came from itself.
 
 ## Daily longshot parlay
 
@@ -1280,6 +1401,9 @@ server/
   calibration.js                          Aggregates graded legs into real hit-rate buckets
   clv.js                                    On-demand approximate closing-line capture
   dailyParlay.js                              Auto-builds one +10000 "favorites" longshot parlay per day
+  bestBets.js                                   "Today's best bets" — EV-ranked standalone single bets, never combined
+  propModel.js                                   Poisson strikeout probability model (challenger, see modelRegistry.js)
+  modelRegistry.js                                 Challenger/promote gate: MIN_PROMOTION_N + Brier-vs-market check, recommendation only
   predictionLog.js                              Appends every priced prediction to data/predictionLog.jsonl for later grading
   predictionEval.js                              Grades the prediction log via postmortem.js, aggregates hit-rate/Brier score
   weather.js                           Open-Meteo (NFL/MLB outdoor venues)
@@ -1300,19 +1424,23 @@ test/
   parlay.test.js                       node:test coverage for combineLegs() — duplicate rejection, mixed-book warning, correlation math
   oddsMath.test.js                       node:test coverage for expectedValue()/kellyStake()'s pushProb handling, normalPdf/normalCdf
   elo.test.js                              node:test coverage for coverProbability()/pushProbability()
+  propModel.test.js                          node:test coverage for the Poisson strikeout model (hand-checked lambda/over-under math)
+  modelRegistry.test.js                        node:test coverage for the challenger/promote gate
+  bestBets.test.js                               node:test coverage for "today's best bets" — EV ranking, never combining
 src/
-  App.jsx           Tabs, sport switcher, slip state
+  App.jsx           Tabs (decision-ordered — see Known-issue history round 7), sport switcher, slip state
   api.js             Frontend fetch wrappers
   components/
+    TodaysBets.jsx    "Today's best bets" — EV-ranked standalone single bets, default landing tab
     EdgeFeed.jsx      Model-vs-market edge table
-    TrendFeed.jsx       MLB streak+matchup trend cards, on-demand prop odds, calibration badges
+    TrendFeed.jsx       MLB streak+matchup trend cards, on-demand prop odds, calibration badges, Poisson model note
     Games.jsx             Upcoming games grid (Elo, weather)
     GameDetail.jsx          Per-game odds table + injuries
     ParlaySlip.jsx            Slip, correlation warnings, bet logging
-    DailyParlay.jsx             Auto-built +10000 favorites parlay, add-all-to-slip
+    DailyParlay.jsx             "Longshot parlay" tab — auto-built +10000 favorites parlay, add-all-to-slip
     BetLog.jsx                    History, CLV, ROI, postmortem breakdown per bet
     Calibration.jsx                 Real (raw + shrunk) hit-rate table across all graded bets
-    PredictionEval.jsx                Prospective hit-rate/Brier-score eval, split by probSource
+    PredictionEval.jsx                Prospective hit-rate/Brier-score eval, split by probSource, promotion column
     SportSwitcher.jsx                 NFL/NBA/MLB toggle
     Disclaimer.jsx                      Always-visible honesty banner
 ```

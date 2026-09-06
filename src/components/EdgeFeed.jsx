@@ -74,6 +74,14 @@ export default function EdgeFeed({ sport, onAddLeg, onSelectGame }) {
       )}
 
       {data && data.edges.length > 0 && (
+        // Confirmed real bug (external review, Sept 2026): this table has 10
+        // columns and had no horizontal-scroll wrapper — on a narrow phone
+        // screen (390px, the reviewer's own reproduction width) it either
+        // forced the whole page to scroll sideways or squeezed every column
+        // unreadably. Wrapped the same way GameDetail.jsx's odds table
+        // already was — the table scrolls within its own box, the page
+        // doesn't.
+        <div className="table-wrap">
         <table className="edge-table">
           <thead>
             <tr>
@@ -161,6 +169,7 @@ export default function EdgeFeed({ sport, onAddLeg, onSelectGame }) {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

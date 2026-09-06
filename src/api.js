@@ -33,6 +33,11 @@ export const api = {
   analyzeBet: (id) => request(`/bets/${id}/analyze`, { method: "POST" }),
   captureClose: (id) => request(`/bets/${id}/capture-close`, { method: "POST" }),
   calibration: () => request("/calibration"),
+  // "Today's best bets" — standalone, EV-ranked single-bet recommendations
+  // (never combined into a parlay). See bestBets.js/README's Known-issue
+  // history for why this exists alongside (and now in front of) the old
+  // favorites-stacking daily parlay.
+  bestBets: () => request("/best-bets"),
   dailyParlay: () => request("/daily-parlay"),
   regenerateDailyParlay: () => request("/daily-parlay/regenerate", { method: "POST" }),
   // Confirmed real gap (external review, Sept 2026): predictionEval.js's

@@ -97,6 +97,15 @@ function TrendCard({ trend, sport, onAddLeg }) {
         {trend.type === "pitcherK" && trend.workloadNote && (
           <div className="warning-note">⚠ {trend.workloadNote}</div>
         )}
+        {trend.type === "pitcherK" && trend.poisson && (
+          <div
+            className="muted small"
+            title="A genuine statistical model (not devig, not calibration): expected strikeouts = this pitcher's own recent innings-pitched average × his own recent strikeouts-per-inning rate over his real last starts, modeled as a Poisson count. Tracked as a separate, honestly-graded prediction (see Model eval tab) — not yet used to price the odds below."
+          >
+            Poisson model: {trend.poisson.lambda.toFixed(1)} expected K (last {trend.poisson.starts} starts, avg{" "}
+            {trend.poisson.avgIP.toFixed(1)} IP)
+          </div>
+        )}
         {trend.savant && (
           <div className="muted small">
             Season {trend.type === "pitcherK" ? "pitching" : "hitting"} profile (Baseball Savant

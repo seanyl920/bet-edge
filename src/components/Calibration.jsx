@@ -39,6 +39,7 @@ export default function Calibration({ refreshKey }) {
       )}
 
       {data && data.buckets.length > 0 && (
+        <div className="table-wrap">
         <table>
           <thead>
             <tr>
@@ -67,6 +68,7 @@ export default function Calibration({ refreshKey }) {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

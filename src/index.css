@@ -83,7 +83,11 @@ table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { color: var(--muted); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; }
 .edge-table .ev-cell { color: var(--accent); font-weight: 600; }
-.odds-table-wrap { overflow-x: auto; }
+/* .table-wrap is the same rule under a more general name — .odds-table-wrap
+   predates most of this app's OTHER tables (bet log, edge feed, daily
+   parlay, calibration) getting one at all; see the mobile fix below for
+   why every data table needs one. */
+.odds-table-wrap, .table-wrap { overflow-x: auto; }
 
 .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; }
 .badge-low { background: #3a1414; color: #f5a3a3; }
@@ -153,3 +157,50 @@ button.primary:disabled { opacity: 0.6; cursor: default; }
 .summary-strip .stat { font-size: 1.3rem; font-weight: 600; }
 .inline-input { width: 70px; background: var(--panel-alt); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 4px; }
 select { background: var(--panel-alt); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 4px; }
+
+/* Confirmed real bug (external review, Sept 2026): reproduced at 390px
+   (the reviewer's own test width) — two separate, compounding failures:
+   1. .app-main was a plain flex row with .app-slip fixed at 320px. On a
+      390px screen that leaves ~46px (minus 48px of horizontal padding —
+      already negative) for the actual feed content next to the slip; the
+      page was unusable, not just cramped.
+   2. Only GameDetail.jsx's odds table and (new this round) PredictionEval's
+      table had a horizontal-scroll wrapper — the bet log (10 columns),
+      edge feed (10 columns), daily parlay, and calibration tables had
+      none, so a narrow viewport either forced the entire page to scroll
+      sideways or squeezed every column into unreadable slivers.
+   Fixed: below this width, the slip drops to full width below the feed
+   instead of beside it (see .table-wrap above for the second half of the
+   fix — now applied to every data table, not just two of six). This is a
+   "no longer broken" fix, not a from-scratch mobile redesign — see
+   Known-issue history for what's still just "usable," not polished. */
+@media (max-width: 760px) {
+  .app-header { padding: 10px 12px; gap: 10px; }
+  .app-header h1 { font-size: 1.1rem; }
+  .disclaimer { padding: 8px 12px; font-size: 0.75rem; }
+
+  /* A 7-button tab bar (6 originally, now 7 with Model eval) wrapping to
+     multiple rows ate vertical space and looked broken on a narrow phone;
+     a single horizontally-scrollable row is the standard mobile pattern
+     and keeps every tab reachable without pushing content down. */
+  .tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px; }
+  .tabs button { white-space: nowrap; }
+
+  .app-main { flex-direction: column; padding: 12px; gap: 12px; }
+  .app-content { width: 100%; }
+  /* Sticky-at-the-top-of-a-320px-column made sense next to a tall feed;
+     stacked below the feed, sticky would just glue the slip to the
+     viewport top while scrolling past unrelated content above it. */
+  .app-slip { width: 100%; position: static; top: auto; }
+
+  .panel { padding: 12px; }
+  table { font-size: 0.78rem; }
+  th, td { padding: 6px 6px; }
+
+  /* Two fixed 1fr columns of injury text is workable on a tablet, not a
+     phone — single column reads naturally instead of wrapping every line. */
+  .injuries-grid { grid-template-columns: 1fr; }
+
+  .modal-backdrop { padding: 12px; }
+  .modal { padding: 14px; max-height: 90vh; }
+}

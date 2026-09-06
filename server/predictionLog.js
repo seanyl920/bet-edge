@@ -58,8 +58,17 @@ export const MODEL_VERSION = "v1-elo-streak-heuristic";
 let loggedToday = null; // dedupeKey -> localDateKey string, once loaded
 let loadPromise = null;
 
+// probSource is part of the key too (added alongside propModel.js's
+// Poisson challenger model): a "devig" and a "poisson" prediction for the
+// exact same (subject/event/market/side/point) are two DIFFERENT
+// predictions about the same real bet — logging one must never silently
+// suppress the other for the rest of the day. Every prior caller only
+// ever produced one probSource per (subject/event/market/side/point), so
+// this doesn't change any existing dedup behavior — it only starts
+// mattering now that a second, genuinely different prediction can target
+// the same key.
 function dedupeKey(record) {
-  return [record.sport, record.kind, record.subjectId, record.leg?.eventId ?? "", record.market, record.side ?? "", record.point ?? ""].join("|");
+  return [record.sport, record.kind, record.subjectId, record.leg?.eventId ?? "", record.market, record.side ?? "", record.point ?? "", record.probSource ?? ""].join("|");
 }
 
 // Reads the existing log (if any) once per process and seeds `loggedToday`

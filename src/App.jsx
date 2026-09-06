@@ -1,5 +1,6 @@
 import { useState } from "react";
 import SportSwitcher from "./components/SportSwitcher.jsx";
+import TodaysBets from "./components/TodaysBets.jsx";
 import EdgeFeed from "./components/EdgeFeed.jsx";
 import TrendFeed from "./components/TrendFeed.jsx";
 import DailyParlay from "./components/DailyParlay.jsx";
@@ -11,11 +12,20 @@ import Calibration from "./components/Calibration.jsx";
 import PredictionEval from "./components/PredictionEval.jsx";
 import Disclaimer from "./components/Disclaimer.jsx";
 
+// Ordered around decision-oriented questions (external review, Sept 2026 —
+// "what I would build next"), not just around data sources: "what should I
+// bet today" now opens the app, "why" (the research feeds) comes next,
+// "what did I bet / how did it go" and "is my model actually working"
+// close it out. "Longshot parlay" (formerly "Daily parlay") is kept, not
+// removed — it's a real, honestly-labeled recreational product, just no
+// longer the thing the app opens on or implies is its primary
+// recommendation.
 const TABS = [
+  { key: "bestBets", label: "Today's bets" },
   { key: "edges", label: "Edge feed" },
   { key: "trends", label: "Trends" },
-  { key: "dailyParlay", label: "Daily parlay" },
   { key: "games", label: "Games" },
+  { key: "longshotParlay", label: "Longshot parlay" },
   { key: "betlog", label: "Bet log" },
   { key: "calibration", label: "Calibration" },
   { key: "modelEval", label: "Model eval" },
@@ -23,7 +33,7 @@ const TABS = [
 
 export default function App() {
   const [sport, setSport] = useState("nfl");
-  const [tab, setTab] = useState("edges");
+  const [tab, setTab] = useState("bestBets");
   const [openGame, setOpenGame] = useState(null);
   const [slip, setSlip] = useState([]);
   const [betLogKey, setBetLogKey] = useState(0);
@@ -71,9 +81,10 @@ export default function App() {
 
       <main className="app-main">
         <div className="app-content">
+          {tab === "bestBets" && <TodaysBets onAddLeg={addLeg} />}
           {tab === "edges" && <EdgeFeed sport={sport} onAddLeg={addLeg} onSelectGame={setOpenGame} />}
           {tab === "trends" && <TrendFeed sport={sport} onAddLeg={addLeg} />}
-          {tab === "dailyParlay" && <DailyParlay onAddLeg={addLeg} />}
+          {tab === "longshotParlay" && <DailyParlay onAddLeg={addLeg} />}
           {tab === "games" && <Games sport={sport} onSelectGame={setOpenGame} />}
           {tab === "betlog" && <BetLog refreshKey={betLogKey} />}
           {tab === "calibration" && <Calibration refreshKey={betLogKey} />}

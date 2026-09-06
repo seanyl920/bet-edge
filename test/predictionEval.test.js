@@ -214,6 +214,22 @@ test("evaluatePredictions splits groups by probSource — devig and calibration 
   assert.equal(calGroup.avgPredictedProb, 0.2);
 });
 
+test("evaluatePredictions attaches a promotion recommendation to every group, wired to modelRegistry.js's real gate", async () => {
+  // Below MIN_PROMOTION_N (30) — must never claim promotable regardless of
+  // how good the (tiny) sample looks.
+  const market = "hitStreakPromotionGate"; // own market name — see isolation comment above
+  for (let i = 0; i < 5; i++) {
+    await recordPrediction(
+      record({ subjectId: `promo-${i}`, eventId: `evt-promo-${i}1`, market, predictedProb: 0.99, marketProb: 0.5 })
+      // eventId ends in "1" -> odd -> hit=true: a great-looking model score on a tiny sample
+    );
+  }
+  const result = await evaluatePredictions({ analyzeBetFn: stubAnalyzeBet });
+  const group = result.groups.find((g) => g.market === market);
+  assert.ok(group.promotion, "expected a promotion field on every group");
+  assert.equal(group.promotion.promotable, false, "5 matched rows must never be enough to recommend promotion, however good they look");
+});
+
 test("evaluatePredictions never throws when analyzeBetFn itself throws", async () => {
   await recordPrediction(record({ subjectId: "throws-a", eventId: "evt-c1" }));
   await assert.doesNotReject(() =>

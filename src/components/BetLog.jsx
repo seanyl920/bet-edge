@@ -162,6 +162,7 @@ export default function BetLog({ refreshKey }) {
         </div>
       )}
 
+      <div className="table-wrap">
       <table className="bet-table">
         <thead>
           <tr>
@@ -246,6 +247,7 @@ export default function BetLog({ refreshKey }) {
           ))}
         </tbody>
       </table>
+      </div>
       {!state.loading && state.bets.length === 0 && <p className="muted">No bets logged yet.</p>}
     </div>
   );
