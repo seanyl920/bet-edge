@@ -15,6 +15,11 @@ const SITE_BASE = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb";
 const WEB_BASE = "https://site.web.api.espn.com/apis/common/v3/sports/baseball/mlb";
 const FETCH_TIMEOUT_MS = 8000;
 
+// "SP"/"RP" confirmed live (see getConfirmedLineup below); "P" included
+// defensively in case some other boxscore variant uses the bare
+// abbreviation instead of the role-specific one.
+const PITCHER_POSITIONS = new Set(["SP", "RP", "P"]);
+
 // These functions used to fail silently (return [] / null) on any problem —
 // safe for the app, useless for debugging. This logs *why* every time
 // something comes back empty, so a thin trend feed is diagnosable from the
@@ -197,7 +202,23 @@ export async function getConfirmedLineup(espnEventId) {
       // reliever role"). Only trustworthy once posted, same as the lineup —
       // `null` when nothing's posted yet, never guessed from the position
       // this pitcher normally plays.
-      const pitchingCategory = (teamEntry?.statistics ?? []).find((s) => s !== battingCategory) ?? teamEntry?.statistics?.[1];
+      //
+      // Confirmed real risk (self-audit, Sept 2026): this used to find the
+      // pitching category by ELIMINATION ("whichever statistics[] entry
+      // isn't the batting one") — only ever confirmed live against a
+      // 2-category response (batting + pitching). If a boxscore ever
+      // carries a third category (e.g. fielding), elimination would happily
+      // "find" that one instead and silently misattribute some fielder's
+      // position as the starting pitcher's role — a wrong, not just
+      // missing, signal. Found by CONTENT instead, the same defensive
+      // approach battingCategory above already uses: a category containing
+      // a starter whose position is an actual pitcher role. Uses the exact
+      // same (starter flag, position abbreviation) facts the code below
+      // already relies on to build `role` in the first place — not a new
+      // unverified assumption, just applied one step earlier.
+      const pitchingCategory = (teamEntry?.statistics ?? []).find((s) =>
+        (s?.athletes ?? []).some((a) => a?.starter === true && PITCHER_POSITIONS.has(a?.athlete?.position?.abbreviation))
+      );
       const pitcherEntry = (pitchingCategory?.athletes ?? []).find((a) => a?.starter === true);
       const startingPitcherRole = pitcherEntry
         ? { id: String(pitcherEntry.athlete?.id), role: pitcherEntry.athlete?.position?.abbreviation ?? null }

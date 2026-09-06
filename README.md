@@ -922,7 +922,7 @@ with a fixture first:
   desktop and 390px mobile widths, and `data/bets.json`/
   `data/predictionLog.jsonl` confirmed clean throughout.
 - **Self-audit (no external review this round — Claude read through every
-  previously-untested server module looking for real bugs) — 4 confirmed
+  previously-untested server module looking for real bugs) — 5 confirmed
   findings, all reproduced against the actual code before fixing, plus
   first-ever test coverage for 10 modules that had none at all:**
   1. **A closing-line-value capture failure always blamed a missing API
@@ -974,6 +974,21 @@ with a fixture first:
      pattern `predictionLog.js` already used) and fixed `writeAll()` to
      `mkdir` `FILE`'s own directory, enabling real test coverage of the
      actual CRUD/validation/concurrency-safety logic for the first time.
+  5. **A confirmed starting pitcher's role could be silently misattributed
+     to a fielder's position if a boxscore ever carried a third stat
+     category.** `mlbData.js`'s `getConfirmedLineup()` found the pitching
+     category by ELIMINATION — "whichever `statistics[]` entry isn't the
+     batting one" — only ever confirmed live against a 2-category
+     (batting + pitching) response. A third category (e.g. fielding)
+     would have been "found" first by that same logic, attributing some
+     fielder's defensive position as the starting pitcher's confirmed
+     role — a wrong, not just missing, signal that could trigger a false
+     starter-conflict suppression in `trends.js`'s `pitcherKTrends`. Fixed
+     to find the pitching category by CONTENT instead (a starter whose
+     position is an actual pitcher role) — the same defensive pattern the
+     adjacent batting-category lookup already uses, built from facts
+     (`starter` flag + `SP`/`RP` position) this code already relied on
+     one step later, not a new unverified assumption.
 
   Also added first-ever test coverage (no bugs found, but zero prior
   coverage on logic this central deserved locking in) for `cache.js`
@@ -982,8 +997,8 @@ with a fixture first:
   doubleheader-disambiguation logic, which has two other real bugs
   documented in its own comments), and `weather.js`'s pure helpers.
 
-  All 4 findings verified with new/extended tests (193 total passing, up
-  from 105 — 88 new tests across 10 new test files, none of which had any
+  All 5 findings verified with new/extended tests (194 total passing, up
+  from 105 — 89 new tests across 10 new test files, none of which had any
   coverage before this round), `node --check` on every touched server
   file, `npm run build`, and `data/bets.json` confirmed clean throughout.
 

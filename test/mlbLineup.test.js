@@ -123,6 +123,49 @@ test("getConfirmedLineup returns confirmed:false and an EMPTY batters array — 
   assert.equal(result.away.startingPitcherRole, null);
 });
 
+test("getConfirmedLineup finds the pitching category by CONTENT even when a third (e.g. fielding) category sits between batting and pitching", async () => {
+  // Confirmed real risk (self-audit, Sept 2026): the old code found the
+  // pitching category by ELIMINATION ("whichever statistics[] entry isn't
+  // the batting one") — only ever confirmed live against a 2-category
+  // response. A THIRD category (fielding) would have been "found" first
+  // by that elimination logic, misattributing a fielder's position as the
+  // starting pitcher's role. This fixture reproduces exactly that shape.
+  const summaryWithFieldingCategory = {
+    header: {
+      competitions: [
+        {
+          competitors: [
+            { homeAway: "home", team: { id: "30" } },
+            { homeAway: "away", team: { id: "21" } },
+          ],
+        },
+      ],
+    },
+    boxscore: {
+      players: [
+        {
+          team: { id: "30" }, // home
+          statistics: [
+            { athletes: [{ starter: true, batOrder: 1, athlete: { id: "1", displayName: "Batter One", position: { abbreviation: "1B" } } }] },
+            // A fielding category sandwiched in between — no batOrder, no
+            // pitcher-position starter — elimination logic would still
+            // "find" this one, since it's simply the first non-batting entry.
+            { athletes: [{ starter: true, athlete: { id: "2", displayName: "Fielder Two", position: { abbreviation: "SS" } } }] },
+            { athletes: [{ starter: true, athlete: { id: "3", displayName: "Real Starter", position: { abbreviation: "SP" } } }] },
+          ],
+        },
+      ],
+    },
+  };
+  stubFetch(summaryWithFieldingCategory);
+  const result = await getConfirmedLineup("evt-fielding-category-1");
+  assert.deepEqual(
+    result.home.startingPitcherRole,
+    { id: "3", role: "SP" },
+    "must find the real pitching category by content (starter + pitcher position), not just 'whichever one comes right after batting'"
+  );
+});
+
 test("getConfirmedLineup never throws when the request fails", async () => {
   globalThis.fetch = async () => {
     throw new Error("simulated network failure");
