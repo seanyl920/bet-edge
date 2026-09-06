@@ -12,7 +12,7 @@ import { getScoreboard } from "./espn.js";
 import { getEloEngine } from "./eloBootstrap.js";
 import { getOdds } from "./oddsApi.js";
 import { matchEspnEvent } from "./teamMatch.js";
-import { coverProbability } from "./elo.js";
+import { coverProbability, pushProbability } from "./elo.js";
 import { recordPrediction } from "./predictionLog.js";
 import { getMlbGameContext } from "./mlbGameContext.js";
 import {
@@ -143,12 +143,16 @@ function consensusAndBest(homePrices, awayPrices) {
   };
 }
 
-function makeEdge({ event, sport, market, side, team, line, best, modelProb, marketProb, sampleSize }) {
+function makeEdge({ event, sport, market, side, team, line, best, modelProb, marketProb, sampleSize, pushProb = 0 }) {
   // EV/Kelly are computed off the blended probability, not raw Elo — see
   // blendWithMarket above. modelProb is still reported as-is (the pure Elo
   // number) so it's visible what the model actually said before shrinkage.
   const blendedProb = blendWithMarket(modelProb, marketProb, sampleSize);
-  const ev = expectedValue(blendedProb, best.decimal);
+  // pushProb (see elo.js's pushProbability) is 0 for every market except an
+  // integer-line spread bet, so this is a no-op for moneylines and
+  // half-point spreads — see expectedValue/kellyStake's own comments for
+  // why a push can't be priced as a full loss.
+  const ev = expectedValue(blendedProb, best.decimal, pushProb);
   return {
     sport: sport.key,
     eventId: event.id,
@@ -164,9 +168,10 @@ function makeEdge({ event, sport, market, side, team, line, best, modelProb, mar
     modelProb: round(modelProb),
     blendedProb: round(blendedProb),
     marketProb: marketProb != null ? round(marketProb) : null,
+    pushProb: pushProb > 0 ? round(pushProb) : undefined,
     ev: round(ev),
     evPct: round(ev * 100, 2),
-    kellyStakePct: round(kellyStake(blendedProb, best.decimal, 0.25) * 100, 2),
+    kellyStakePct: round(kellyStake(blendedProb, best.decimal, 0.25, pushProb) * 100, 2),
     sampleSize,
   };
 }
@@ -306,6 +311,17 @@ export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
         marketSpreadHome: homePoint,
         marginSigma: prediction.marginSigma,
       });
+      // Confirmed real bug (external review, Sept 2026): an integer spread
+      // (-3, -7, -10, or a pick'em 0 — all common in the NFL) can push, and
+      // nothing here accounted for that real third outcome — see elo.js's
+      // pushProbability for why "not cover" isn't the same as "lose."
+      // Non-integer lines (the NBA's usual half-point spreads) correctly
+      // get 0 back and are priced exactly as before.
+      const pushProbHome = pushProbability({
+        expectedMarginHome: prediction.expectedMarginHome,
+        marketSpreadHome: homePoint,
+        marginSigma: prediction.marginSigma,
+      });
       // Computed independently from home's side, not derived as
       // 1-coverProbHome — that shortcut silently assumed awayPoint is
       // exactly -homePoint, which modalSpreadPair no longer guarantees is
@@ -317,12 +333,17 @@ export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
         marketSpreadHome: awayPoint,
         marginSigma: prediction.marginSigma,
       });
+      const pushProbAway = pushProbability({
+        expectedMarginHome: -prediction.expectedMarginHome,
+        marketSpreadHome: awayPoint,
+        marginSigma: prediction.marginSigma,
+      });
 
       if (spread.bestHome) {
         const edge = makeEdge({
           event, sport, market: "spread", side: "home", team: event.home.name, line: homePoint,
           best: spread.bestHome, modelProb: coverProbHome, marketProb: spread.consensus.home,
-          sampleSize: prediction.sampleSize,
+          sampleSize: prediction.sampleSize, pushProb: pushProbHome,
         });
         await logEdgePrediction(edge);
         if (edge.ev >= threshold) edges.push(edge);
@@ -331,7 +352,7 @@ export async function getEdgeFeed(sport, { threshold = 0.02 } = {}) {
         const edge = makeEdge({
           event, sport, market: "spread", side: "away", team: event.away.name, line: awayPoint,
           best: spread.bestAway, modelProb: coverProbAway, marketProb: spread.consensus.away,
-          sampleSize: prediction.sampleSize,
+          sampleSize: prediction.sampleSize, pushProb: pushProbAway,
         });
         await logEdgePrediction(edge);
         if (edge.ev >= threshold) edges.push(edge);

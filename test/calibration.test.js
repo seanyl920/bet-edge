@@ -4,7 +4,7 @@
 // the real bet log.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getCalibration } from "../server/calibration.js";
+import { getCalibration, lookupTrendCalibration, lookupTrendPointCalibration } from "../server/calibration.js";
 
 function trendBet({ id, eventId, playerId = "p1", trendType = "hitStreak", side = "Over", point = 1.5, score = 9, hit }) {
   return {
@@ -69,6 +69,46 @@ test("getCalibration dedupes edge-kind legs by (eventId, market, side, line) the
   const { buckets } = await getCalibration({ listBetsFn: async () => bets });
   const bucket = buckets.find((b) => b.key.startsWith("edge:mlb:moneyline:"));
   assert.equal(bucket.n, 2, "10 copies of evt-edge-1 plus 1 real evt-edge-2 must count as 2 real occurrences");
+});
+
+test("getCalibration shrinks a calibrated bucket's rate toward 50% instead of handing out a raw n=15 100% frequency", async () => {
+  // Confirmed real bug (external review, Sept 2026): a bucket at exactly
+  // MIN_SAMPLE with a perfect record used to hand out its raw 100%
+  // frequency as-is — an extraordinary, overconfident claim from a small
+  // sample. shrunkRatePct must be materially pulled toward the 50% prior.
+  const bets = Array.from({ length: 15 }, (_, i) => trendBet({ id: `perfect-${i}`, eventId: `evt-perf-${i}`, hit: true }));
+
+  const { buckets } = await getCalibration({ listBetsFn: async () => bets });
+  const scoreBucket = buckets.find((b) => b.key.startsWith("trend:mlb:hitStreak:over:"));
+  assert.equal(scoreBucket.hitRatePct, 100, "raw frequency must still be reported honestly");
+  assert.ok(scoreBucket.shrunkRatePct < 100, "the rate actually used for pricing must not be a flat 100% off 15 samples");
+  assert.ok(scoreBucket.shrunkRatePct > 50, "still meaningfully above 50% — shrinkage tempers, it doesn't erase, a real 15/15 record");
+});
+
+test("getCalibration's shrinkage converges toward the raw rate as sample size grows (the prior stops mattering with real volume)", async () => {
+  const few = Array.from({ length: 15 }, (_, i) => trendBet({ id: `few-${i}`, eventId: `evt-few-${i}`, hit: true }));
+  const many = Array.from({ length: 150 }, (_, i) => trendBet({ id: `many-${i}`, eventId: `evt-many-${i}`, hit: true }));
+
+  const { buckets: fewBuckets } = await getCalibration({ listBetsFn: async () => few });
+  const { buckets: manyBuckets } = await getCalibration({ listBetsFn: async () => many });
+  const fewRate = fewBuckets.find((b) => b.key.startsWith("trend:mlb:hitStreak:over:")).shrunkRatePct;
+  const manyRate = manyBuckets.find((b) => b.key.startsWith("trend:mlb:hitStreak:over:")).shrunkRatePct;
+  assert.ok(manyRate > fewRate, "150/150 should be trusted closer to its raw 100% than 15/15 is");
+});
+
+test("lookupTrendCalibration and lookupTrendPointCalibration return the SHRUNK rate, not the raw hitRatePct", async () => {
+  const bets = Array.from({ length: 15 }, (_, i) =>
+    trendBet({ id: `lookup-${i}`, eventId: `evt-lookup-${i}`, point: 2.5, hit: true })
+  );
+  const { buckets } = await getCalibration({ listBetsFn: async () => bets });
+  const scoreBucket = buckets.find((b) => b.key.startsWith("trend:mlb:hitStreak:over:"));
+  const pointBucket = buckets.find((b) => b.key.startsWith("trendpoint:mlb:hitStreak:over:2.5"));
+
+  const scoreLookup = lookupTrendCalibration(buckets, "mlb", "hitStreak", "Over", 9);
+  const pointLookup = lookupTrendPointCalibration(buckets, "mlb", "hitStreak", "Over", 2.5);
+  assert.equal(scoreLookup.rate, scoreBucket.shrunkRatePct / 100);
+  assert.equal(pointLookup.rate, pointBucket.shrunkRatePct / 100);
+  assert.notEqual(scoreLookup.rate, scoreBucket.hitRatePct / 100, "must not silently fall back to the raw, unshrunk rate");
 });
 
 test("getCalibration treats two different players in the same game as different occurrences", async () => {

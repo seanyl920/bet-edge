@@ -8,7 +8,7 @@
 // tapers off as the pre-game rating gap grows (to avoid over-crediting blowouts
 // against already-weak teams), plus a fixed home-field/court advantage.
 
-import { normalCdf } from "./oddsMath.js";
+import { normalCdf, normalPdf } from "./oddsMath.js";
 
 export const BASE_RATING = 1500;
 
@@ -32,6 +32,33 @@ export function coverProbability({ expectedMarginHome, marketSpreadHome, marginS
   const threshold = -marketSpreadHome;
   const z = (expectedMarginHome - threshold) / marginSigma;
   return normalCdf(z);
+}
+
+/**
+ * Probability the actual margin lands EXACTLY on the spread line (a push —
+ * final score is reproduced, stake refunded, no win or loss).
+ *
+ * Confirmed real bug (external review, Sept 2026): coverProbability above
+ * treats "cover" and "not cover" as the only two outcomes, which is only
+ * true for a HALF-point line (impossible to push). An INTEGER line (-3,
+ * -7, -10, or a pick'em 0 — all common in the NFL; margin=3 and margin=7
+ * are the two single most frequent NFL final-margin gaps) can push, and
+ * neither "cover" nor "1 - cover" accounted for that real third outcome —
+ * every downstream EV/Kelly number for an integer-spread edge was silently
+ * treating a real, non-trivial push chance as a full loss. Real margins
+ * are integers, but this model treats margin as continuous, so there's no
+ * literal point mass to read off a normal distribution — the standard fix
+ * or a discrete distribution is a continuity correction: approximate
+ * P(margin == threshold) as the normal density AT that point, scaled to a
+ * width-1 bin (since final margins are spaced 1 apart). Half-point lines
+ * correctly get 0 here (the threshold falls between two possible integer
+ * margins, so it truly can't happen).
+ */
+export function pushProbability({ expectedMarginHome, marketSpreadHome, marginSigma }) {
+  if (!Number.isInteger(marketSpreadHome)) return 0;
+  const threshold = -marketSpreadHome;
+  const z = (expectedMarginHome - threshold) / marginSigma;
+  return normalPdf(z) / marginSigma;
 }
 
 function movMultiplier(marginAbs, eloDiffWinner) {

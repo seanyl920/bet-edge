@@ -186,6 +186,34 @@ test("evaluatePredictions excludes a record whose recordedAt is at or after its 
   assert.equal(group, undefined, "a post-start record must never contribute to any group's stats");
 });
 
+test("evaluatePredictions splits groups by probSource — devig and calibration predictions are not the same model", async () => {
+  // Confirmed real bug (external review, Sept 2026): groupKey used to omit
+  // probSource, so a "devig" (raw market-implied probability) row and a
+  // "calibration" (this app's own graded-history rate) row for the same
+  // market landed in one group and got averaged together, even though
+  // they're two different methods of producing predictedProb.
+  const market = "hitStreakProbSourceSplit"; // own market name — see isolation comment above
+  await recordPrediction(
+    record({ subjectId: "psrc-devig-1", eventId: "evt-psrc-d1", market, probSource: "devig", predictedProb: 0.9, marketProb: 0.5 })
+    // eventId ends in "1" -> odd -> hit=true
+  );
+  await recordPrediction(
+    record({ subjectId: "psrc-cal-1", eventId: "evt-psrc-c1", market, probSource: "calibration", predictedProb: 0.2, marketProb: 0.5 })
+    // eventId ends in "1" -> odd -> hit=true too, but priced very differently by the other method
+  );
+
+  const result = await evaluatePredictions({ analyzeBetFn: stubAnalyzeBet });
+  const groups = result.groups.filter((g) => g.market === market);
+  assert.equal(groups.length, 2, "expected devig and calibration rows to land in two separate groups, not one");
+  const devigGroup = groups.find((g) => g.probSource === "devig");
+  const calGroup = groups.find((g) => g.probSource === "calibration");
+  assert.ok(devigGroup && calGroup);
+  assert.equal(devigGroup.n, 1);
+  assert.equal(calGroup.n, 1);
+  assert.equal(devigGroup.avgPredictedProb, 0.9);
+  assert.equal(calGroup.avgPredictedProb, 0.2);
+});
+
 test("evaluatePredictions never throws when analyzeBetFn itself throws", async () => {
   await recordPrediction(record({ subjectId: "throws-a", eventId: "evt-c1" }));
   await assert.doesNotReject(() =>

@@ -8,6 +8,7 @@ import GameDetail from "./components/GameDetail.jsx";
 import ParlaySlip from "./components/ParlaySlip.jsx";
 import BetLog from "./components/BetLog.jsx";
 import Calibration from "./components/Calibration.jsx";
+import PredictionEval from "./components/PredictionEval.jsx";
 import Disclaimer from "./components/Disclaimer.jsx";
 
 const TABS = [
@@ -17,6 +18,7 @@ const TABS = [
   { key: "games", label: "Games" },
   { key: "betlog", label: "Bet log" },
   { key: "calibration", label: "Calibration" },
+  { key: "modelEval", label: "Model eval" },
 ];
 
 export default function App() {
@@ -26,8 +28,26 @@ export default function App() {
   const [slip, setSlip] = useState([]);
   const [betLogKey, setBetLogKey] = useState(0);
 
+  // Confirmed real bug (external review, Sept 2026): clicking "+ Slip"
+  // repeatedly (or on the same outcome from two different feeds) just kept
+  // appending — the server then priced every copy as an independent leg,
+  // producing a wildly inflated combined payout for what's really one bet
+  // placed twice (see parlay.js's matching identity check, kept here too
+  // as the first line of defense so a duplicate never even reaches the
+  // server). Same identity as there: (eventId, market, selection) — the
+  // same real-world outcome, regardless of price/book.
+  function legIdentityKey(l) {
+    return `${l.eventId ?? ""}|${l.market ?? ""}|${l.selection ?? ""}`;
+  }
   function addLeg(leg) {
-    setSlip((s) => [...s, leg]);
+    setSlip((s) => {
+      const key = legIdentityKey(leg);
+      if (s.some((l) => legIdentityKey(l) === key)) {
+        console.warn(`[BetEdge] "${leg.label ?? leg.selection}" is already in the slip — not adding it twice.`);
+        return s;
+      }
+      return [...s, leg];
+    });
   }
   function removeLeg(i) {
     setSlip((s) => s.filter((_, idx) => idx !== i));
@@ -57,6 +77,7 @@ export default function App() {
           {tab === "games" && <Games sport={sport} onSelectGame={setOpenGame} />}
           {tab === "betlog" && <BetLog refreshKey={betLogKey} />}
           {tab === "calibration" && <Calibration refreshKey={betLogKey} />}
+          {tab === "modelEval" && <PredictionEval />}
         </div>
         <aside className="app-slip">
           <ParlaySlip

@@ -740,6 +740,120 @@ with a fixture first:
   test hitting `/api/health`, `/api/predictions/eval`, and
   `/api/calibration` directly, and `data/bets.json` confirmed unchanged
   throughout.
+- **Round 7 (external review of the round-6 fixes plus a fresh pass over
+  the whole app, relayed as "everything ChatGPT wants to work on," Sept
+  2026) — 8 confirmed correctness findings, all reproduced against the
+  actual code before fixing, all fixed. (The same review's UI/mobile-
+  layout verdict and its "what I would build next" product-redesign
+  roadmap — replacing the daily parlay, real prop-probability models, a
+  challenger/promote ML pipeline — are tracked separately and need an
+  explicit scope decision before any of that starts; they are not part of
+  this entry.)**
+  1. **A specific prop line's calibrated price could get silently
+     overwritten by an unrelated, coarser rate.** `TrendFeed.jsx` computed
+     `realProb` as `trend.calibration?.rate ?? o.trueProb` for an Over —
+     but `trend.calibration` is the score-*bucketed* rate used for
+     *ranking* a trend before any line is chosen (see
+     `lookupTrendCalibration`), not the point-and-side-scoped rate for the
+     *specific* line a user is actually looking at odds for (that's
+     `o.trueProb`, already correctly resolved server-side by
+     `getTrendPropOdds`'s own `lookupTrendPointCalibration` loop). Any
+     trend with a ranking-bucket calibration silently clobbered its own
+     correctly-priced `o.trueProb` with a probability from a completely
+     different threshold. Fixed: `realProb` is just `o.trueProb` now — the
+     override is gone.
+  2. **The same real-world bet could be added to a slip more than once,
+     multiplying its own odds against itself.** Nothing checked for a
+     duplicate leg — reproduced with 10 copies of one -150 pick reported
+     as a combined +16438 parlay at 0% EV, since the naive independent-legs
+     math has no way to know two legs are actually the same bet. Fixed on
+     both sides: `parlay.js`'s `combineLegs()` now rejects a duplicate
+     `(eventId, market, selection)` outright (a real 400, not a warning),
+     and `App.jsx`'s `addLeg()` blocks it client-side first so it never
+     even reaches the request.
+  3. **A parlay's legs could be silently priced across different
+     sportsbooks with no way to tell.** Every leg is priced by
+     independently line-shopping the best price per market (see
+     `edges.js`/`trends.js`) — but the `book` that price came from was
+     computed and then dropped before it ever reached the leg object built
+     for the slip, in all four places a leg gets constructed
+     (`EdgeFeed.jsx`, `TrendFeed.jsx`, and both leg-builders in
+     `dailyParlay.js`). A combined parlay could mix a DraftKings leg with a
+     FanDuel leg with no indication that no single book necessarily offers
+     that exact combination as one placeable bet. Fixed: `book` is now
+     captured and forwarded at all four sites through to `ParlaySlip.jsx`
+     (shown next to each leg), and `combineLegs()` warns (doesn't block —
+     an older bet predating this fix has no `book` and is correctly
+     excluded from the check, not treated as a mismatch against itself)
+     when a slip's legs span more than one book.
+  4. **Devig-priced and calibration-priced predictions for the same market
+     were silently averaged together in one evaluation group.**
+     `predictionEval.js`'s `groupKey` grouped by `(modelVersion, sport,
+     kind, market)` only — but a trend's `probSource` can be `"devig"` (raw
+     market-implied probability) or `"calibration"` (this app's own
+     graded-history rate for that exact line) depending on whether enough
+     graded history exists yet for that specific line, and those are two
+     fundamentally different methods of arriving at `predictedProb`, not
+     one model. Averaging their hit rates/Brier scores together made a
+     group's numbers swing with how often calibration data happened to be
+     available, unrelated to either method actually getting better or
+     worse. Fixed: `probSource` is now part of the group key (and reported
+     in each group), so the two are never mixed.
+  5. **An integer point-spread's real push chance was priced as a full
+     loss.** `coverProbability()`'s normal-distribution model only ever
+     produces "cover" and "doesn't cover" — correct for a half-point line
+     (a push is genuinely impossible), but an *integer* line (`-3`, `-7`,
+     `-10`, or a pick'em `0` — all common in the NFL; margin=3 and margin=7
+     are the two single most frequent NFL final-margin gaps) can push, and
+     a push refunds the stake rather than losing it. `expectedValue()` and
+     `kellyStake()` both folded `1 - coverProb` straight into "lose the
+     whole stake," silently treating a real, non-trivial push probability
+     as a loss on every integer-spread edge. Fixed: added `pushProbability()`
+     (a continuity-corrected normal-density estimate — 0 for any
+     non-integer line, unaffected) in `elo.js`, threaded through as an
+     optional `pushProb` parameter on `expectedValue()`/`kellyStake()`
+     (defaults to 0, so every other market's math is byte-for-byte
+     unchanged) and computed for both sides of every spread edge in
+     `edges.js`.
+  6. **A failed load, edit, delete, or analyze in the bet log surfaced
+     nothing to the user — and delete had no confirmation.**
+     `BetLog.jsx`'s `reload()` had no `.catch` at all (a failure left
+     `loading: true` forever, since the `.then()` that would flip it back
+     never ran), and `patch()`/`remove()`/`analyze()` had no error handling
+     — a rejected request became a silent, invisible failure. `remove()`
+     also deleted immediately on click with no confirmation, and
+     `deleteBet()` has no undo. Fixed: all four now report failures
+     through a shared error banner (matching `ParlaySlip.jsx`'s existing
+     `error` pattern), and `remove()` asks for confirmation first.
+  7. **A calibrated bucket's raw small-sample frequency was handed out
+     directly as a probability.** Once a bucket reached `MIN_SAMPLE` (15),
+     its raw `hits/n` frequency was used as-is — a bucket at exactly 15/15
+     was treated exactly as "trustworthy" as one at 8/15, even though the
+     first is an extraordinary claim from a tiny sample. Fixed: added
+     `shrinkRate()` — a Bayesian average toward a neutral 50% prior with
+     `PRIOR_STRENGTH = 8` pseudo-observations (this app has no principled
+     per-bucket prior, so a conservative coin-flip midpoint is used rather
+     than guessing one that would itself need justifying) — as
+     `shrunkRatePct`, kept alongside the raw `hitRatePct` for transparency.
+     `lookupTrendCalibration()`/`lookupTrendPointCalibration()` now return
+     the shrunk rate, not the raw one; `Calibration.jsx` shows both
+     columns so the difference is visible, not just theoretical.
+  8. **The one honest, prospective evaluation this app can do was
+     computed and never shown to anyone.** `GET /api/predictions/eval`
+     existed and worked, but `src/api.js` had no method for it and no tab
+     called it — the real hit-rate/Brier-score check this project is
+     required to run before claiming any improvement was invisible in
+     practice. Fixed: added `api.predictionsEval()` and a new "Model eval"
+     tab (`PredictionEval.jsx`) rendering `evaluatePredictions()`'s groups
+     (split by `probSource`, per finding 4 above), the matched-comparison
+     Brier scores, and why any record went ungraded.
+
+  All 8 verified with new tests (75 total passing, up from 50 — including
+  first-ever coverage for `parlay.js`, `oddsMath.js`, and `elo.js`, none of
+  which had any before this round), `node --check` on every touched
+  server file, `npm run build`, a server boot test hitting
+  `/api/calibration` and `/api/predictions/eval` directly, and
+  `data/bets.json`/`data/predictionLog.jsonl` confirmed clean throughout.
 
 ## Daily longshot parlay
 
@@ -852,17 +966,24 @@ made it into your slip.
   grading implementation that could drift from the real one. Logging never
   throws — a failure here must never break the feed that generated the
   prediction.
-- **`server/predictionEval.js`** (`GET /api/predictions/eval`) reads that
+- **`server/predictionEval.js`** (`GET /api/predictions/eval`, surfaced in
+  the frontend's "Model eval" tab — see `PredictionEval.jsx`) reads that
   log, grades every record that's decidable by now the same way a bet log
   entry is graded, and aggregates hit rate + a [Brier
   score](https://en.wikipedia.org/wiki/Brier_score) — for this app's own
   `predictedProb` **and**, independently, for the `marketProb` captured at
-  the same moment — grouped by `modelVersion`/sport/kind/market. A record
-  that isn't decidable yet (game not final, missing snapshot, an ESPN
-  hiccup) is excluded from the aggregate entirely, never counted as a loss
-  or backfilled with a guess. Comparing the two Brier scores against each
-  other is what would eventually let this say "beats the devigged market"
-  or "doesn't" — with real numbers, not an assertion.
+  the same moment — grouped by `modelVersion`/sport/kind/market/`probSource`
+  (a "devig" prediction and a "calibration" prediction for the same market
+  are two different methods of arriving at a probability, not one model —
+  see Known-issue history, round 7 — so they're never averaged into one
+  group). A record that isn't decidable yet (game not final, missing
+  snapshot, an ESPN hiccup) is excluded from the aggregate entirely, never
+  counted as a loss or backfilled with a guess. Comparing the two Brier
+  scores against each other, on only the predictions where both exist (the
+  `comparison` field — see Known-issue history, round 6, for why the two
+  independent scores alone can disagree with it), is what actually lets
+  this say "beats the devigged market" or "doesn't" — with real numbers,
+  not an assertion.
 
 **This is not a historical backtest, and doesn't claim to be one.** This
 app has no archive of past ESPN/odds snapshots to replay chronologically
@@ -1173,6 +1294,12 @@ test/
   mlbGameContext.test.js       node:test coverage for getMlbGameContext()'s composition of the above (right side gets right pitcher/role/K-BB%, never throws)
   pitcherWorkload.test.js      node:test coverage for pitcherKTrends' days-rest and opener-role math
   savantData.test.js           node:test coverage for savantData.js, using REAL CSV rows pasted from a live Savant response this session
+  calibration.test.js            node:test coverage for getCalibration()'s occurrence-dedup and shrinkage logic
+  dailyParlayDateFilter.test.js     node:test coverage for trendCandidates()'s today-only filter
+  trendPropOddsLogging.test.js       end-to-end: getTrendPropOdds() alone logs a prediction (no dailyParlay involvement)
+  parlay.test.js                       node:test coverage for combineLegs() — duplicate rejection, mixed-book warning, correlation math
+  oddsMath.test.js                       node:test coverage for expectedValue()/kellyStake()'s pushProb handling, normalPdf/normalCdf
+  elo.test.js                              node:test coverage for coverProbability()/pushProbability()
 src/
   App.jsx           Tabs, sport switcher, slip state
   api.js             Frontend fetch wrappers
@@ -1184,7 +1311,8 @@ src/
     ParlaySlip.jsx            Slip, correlation warnings, bet logging
     DailyParlay.jsx             Auto-built +10000 favorites parlay, add-all-to-slip
     BetLog.jsx                    History, CLV, ROI, postmortem breakdown per bet
-    Calibration.jsx                 Real hit-rate table across all graded bets
+    Calibration.jsx                 Real (raw + shrunk) hit-rate table across all graded bets
+    PredictionEval.jsx                Prospective hit-rate/Brier-score eval, split by probSource
     SportSwitcher.jsx                 NFL/NBA/MLB toggle
     Disclaimer.jsx                      Always-visible honesty banner
 ```

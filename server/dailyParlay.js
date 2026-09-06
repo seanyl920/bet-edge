@@ -137,6 +137,12 @@ async function edgeCandidates() {
           market: e.market,
           selection: `${e.team}${e.line != null ? ` ${e.line}` : ""}`,
           americanOdds: e.americanOdds,
+          // Confirmed real gap (external review, Sept 2026): makeEdge()
+          // already returns which book this best price is from — never
+          // carried into the leg pushed here, so a daily-parlay leg's book
+          // was silently lost. See parlay.js's combineLegs for the
+          // same-book check this enables.
+          book: e.book,
           // blendedProb (Elo shrunk toward market), not raw modelProb — see
           // edges.js's blendWithMarket. Same reasoning as trend legs below:
           // don't feed a probability into this app's own EV math that the
@@ -277,6 +283,9 @@ export async function trendCandidates({ getTrendFeedFn = getTrendFeed, getTrendP
         market: t.type,
         selection: `Over ${best.point}`,
         americanOdds: best.price,
+        // Confirmed real gap (external review, Sept 2026) — same as the
+        // edge-leg push above.
+        book: best.book,
         trueProb,
         probSource: best.probSource ?? "devig",
         decimalOdds: americanToDecimal(best.price),

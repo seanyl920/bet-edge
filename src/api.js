@@ -35,4 +35,10 @@ export const api = {
   calibration: () => request("/calibration"),
   dailyParlay: () => request("/daily-parlay"),
   regenerateDailyParlay: () => request("/daily-parlay/regenerate", { method: "POST" }),
+  // Confirmed real gap (external review, Sept 2026): predictionEval.js's
+  // route existed server-side with no frontend method or UI tab at all —
+  // the one honest, prospective (not self-selected) hit-rate/Brier-score
+  // check this app can do was computed on every request and then never
+  // seen by anyone. See PredictionEval.jsx.
+  predictionsEval: () => request("/predictions/eval"),
 };

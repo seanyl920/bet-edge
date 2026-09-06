@@ -13,6 +13,29 @@ import { listBets } from "./betlog.js";
 
 const MIN_SAMPLE = 15;
 
+// Confirmed real gap (external review, Sept 2026): once a bucket crosses
+// MIN_SAMPLE, its raw hits/n frequency was handed straight out as THE
+// probability — no accounting for how noisy a small sample still is. 15
+// isn't a magic point where sampling noise vanishes: 15/15 (100%) and
+// 8/15 (53%) are treated identically "trustworthy" even though the first
+// is an extraordinary claim from a tiny sample. Standard fix: shrink the
+// raw rate toward a neutral prior by PRIOR_STRENGTH pseudo-observations
+// (a simple Beta-prior/Bayesian-average — same math as "add k fake
+// observations at the prior rate, then take the frequency"), so a bucket
+// right at MIN_SAMPLE is pulled hard toward the prior and only a bucket
+// with real volume gets to fully trust its own observed rate. 0.5 is used
+// as the prior mean because this app has no principled per-bucket prior
+// (a trend type's "true" base rate isn't known independently of the data
+// used to estimate it) — deliberately conservative (pulls extreme
+// observed rates toward a coin flip) rather than guessing a number that
+// would itself need justifying.
+const PRIOR_STRENGTH = 8; // pseudo-observations at the prior rate
+const PRIOR_RATE = 0.5;
+
+function shrinkRate(hits, n) {
+  return (hits + PRIOR_STRENGTH * PRIOR_RATE) / (n + PRIOR_STRENGTH);
+}
+
 function scoreBucketLabel(score) {
   if (score == null) return "unknown";
   const lo = Math.floor(score / 3) * 3;
@@ -150,7 +173,11 @@ export async function getCalibration({ listBetsFn = listBets } = {}) {
   const table = [...buckets.values()]
     .map((b) => ({
       ...b,
+      // Raw observed frequency — kept and shown for transparency (what
+      // actually happened), but no longer what gets used as a probability
+      // once a bucket is "calibrated" — see shrunkRatePct/shrinkRate above.
       hitRatePct: Math.round((b.hits / b.n) * 1000) / 10,
+      shrunkRatePct: Math.round(shrinkRate(b.hits, b.n) * 1000) / 10,
       calibrated: b.n >= MIN_SAMPLE,
     }))
     .sort((a, b) => b.n - a.n);
@@ -163,7 +190,9 @@ export function lookupTrendCalibration(buckets, sport, trendType, side, score) {
   const key = trendKey(sport, trendType, side, score);
   const bucket = buckets.find((b) => b.key === key);
   if (!bucket || !bucket.calibrated) return null;
-  return { rate: bucket.hitRatePct / 100, n: bucket.n };
+  // Shrunk, not raw — see shrinkRate's comment above for why the raw
+  // hits/n frequency is never handed out directly as a probability.
+  return { rate: bucket.shrunkRatePct / 100, n: bucket.n };
 }
 
 /** Look up a calibrated rate for one SPECIFIC prop line (sport, trend type, side, threshold) — the real identity of a bet, for pricing it, not the coarser score-bucketed rate above. */
@@ -171,5 +200,7 @@ export function lookupTrendPointCalibration(buckets, sport, trendType, side, poi
   const key = trendPointKey(sport, trendType, side, point);
   const bucket = buckets.find((b) => b.key === key);
   if (!bucket || !bucket.calibrated) return null;
-  return { rate: bucket.hitRatePct / 100, n: bucket.n };
+  // Shrunk, not raw — see shrinkRate's comment above for why the raw
+  // hits/n frequency is never handed out directly as a probability.
+  return { rate: bucket.shrunkRatePct / 100, n: bucket.n };
 }

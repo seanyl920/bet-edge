@@ -38,30 +38,66 @@ export default function BetLog({ refreshKey }) {
   const [analyzing, setAnalyzing] = useState(null);
   const [capturing, setCapturing] = useState(null);
   const [captureError, setCaptureError] = useState(null);
+  // Confirmed real gap (external review, Sept 2026): load/edit/delete/analyze
+  // all called their api.* method with no .catch (load) or no try/catch at
+  // all (edit, delete, analyze) — a failed request (network error, a 400
+  // from the server) became an unhandled promise rejection that the UI
+  // never showed the user anything about. Worse for load specifically: a
+  // failure left `loading: true` forever, since the .then() that would
+  // flip it to false never ran. One shared error slot for these four
+  // (captureClose already has its own row-scoped captureError above).
+  const [actionError, setActionError] = useState(null);
 
   function reload() {
     setState((s) => ({ ...s, loading: true }));
-    api.listBets().then(({ bets, summary }) => setState({ loading: false, bets, summary }));
+    api
+      .listBets()
+      .then(({ bets, summary }) => setState({ loading: false, bets, summary }))
+      .catch((err) => {
+        setState((s) => ({ ...s, loading: false }));
+        setActionError(`Couldn't load the bet log: ${err.message}`);
+      });
   }
 
   useEffect(reload, [refreshKey]);
 
   async function patch(id, body) {
-    await api.updateBet(id, body);
-    reload();
+    try {
+      await api.updateBet(id, body);
+      setActionError(null);
+      reload();
+    } catch (err) {
+      // Reload deliberately skipped here — the edit didn't take, so
+      // re-fetching would just show the same (unedited) row again and the
+      // error message would explain why nothing visibly changed.
+      setActionError(`Couldn't save that change: ${err.message}`);
+    }
   }
 
   async function remove(id) {
-    await api.deleteBet(id);
-    reload();
+    // Confirmed real gap: this used to delete immediately on click, with
+    // no confirmation — a single misclick permanently removed a logged
+    // bet (deleteBet has no undo). A native confirm() is enough here; this
+    // app has no modal/dialog component elsewhere to match.
+    if (!window.confirm("Delete this bet? This can't be undone.")) return;
+    try {
+      await api.deleteBet(id);
+      setActionError(null);
+      reload();
+    } catch (err) {
+      setActionError(`Couldn't delete that bet: ${err.message}`);
+    }
   }
 
   async function analyze(id) {
     setAnalyzing(id);
     try {
       await api.analyzeBet(id);
+      setActionError(null);
       setExpanded((s) => new Set(s).add(id));
       reload();
+    } catch (err) {
+      setActionError(`Couldn't analyze that bet: ${err.message}`);
     } finally {
       setAnalyzing(null);
     }
@@ -95,6 +131,8 @@ export default function BetLog({ refreshKey }) {
       <div className="panel-header">
         <h2>Bet log</h2>
       </div>
+
+      {actionError && <p className="error">{actionError}</p>}
 
       {summary && (
         <div className="summary-strip">

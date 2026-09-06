@@ -55,17 +55,30 @@ function matchedBrierComparison(rows) {
   return { n: matched.length, modelBrierScore: round(scoreFor("predictedProb")), marketBrierScore: round(scoreFor("marketProb")) };
 }
 
+// Confirmed real bug (external review, Sept 2026): probSource was absent
+// from this key, so rows priced by fundamentally different methods —
+// "devig" (raw devigged market-implied probability) vs "calibration"
+// (this app's own graded-history rate for that exact line, see
+// trends.js's getTrendPropOdds) — landed in the SAME group whenever their
+// modelVersion/sport/kind/market happened to match. Those two are not one
+// model; averaging their hit rates and Brier scores together tells you
+// nothing about either method on its own, and a shift in how often
+// calibration data happens to be available (nothing to do with either
+// method getting better or worse) could swing a group's numbers on its
+// own. Split by probSource too, same as any other real change in how a
+// prediction was produced.
 function groupKey(r) {
-  return [r.modelVersion, r.sport, r.kind, r.market].join("|");
+  return [r.modelVersion, r.sport, r.kind, r.market, r.probSource ?? ""].join("|");
 }
 
 function summarizeGroup(rows) {
-  const [{ modelVersion, sport, kind, market }] = rows;
+  const [{ modelVersion, sport, kind, market, probSource }] = rows;
   return {
     modelVersion,
     sport,
     kind,
     market,
+    probSource: probSource ?? null,
     n: rows.length,
     wins: rows.filter((r) => r.hit).length,
     hitRate: round(avg(rows.map((r) => (r.hit ? 1 : 0)))),

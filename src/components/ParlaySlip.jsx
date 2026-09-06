@@ -95,6 +95,7 @@ export default function ParlaySlip({ legs, onRemove, onClear, onLogged }) {
               <div>{l.label ?? l.selection}</div>
               <div className="muted small">
                 {l.matchup} · {fmtOdds(l.americanOdds)}
+                {l.book ? ` · ${l.book}` : ""}
               </div>
             </div>
             <button className="link" onClick={() => onRemove(i)}>

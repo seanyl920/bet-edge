@@ -23,7 +23,9 @@ export default function Calibration({ refreshKey }) {
         Real hit rates from your own graded bets, bucketed by trend type/score or by the edge feed's model
         probability. A bucket needs at least <strong>{data?.minSample ?? 15}</strong> graded legs before it's
         trusted enough to actually change how trends are ranked — those rows are marked "calibrated" below;
-        everything else is shown for visibility only.
+        everything else is shown for visibility only. "Raw" is the plain observed frequency; "used" is that
+        rate shrunk toward a neutral 50% prior — a small sample's raw frequency can look extreme (e.g. 15/15)
+        purely from noise, so the shrunk number (not the raw one) is what actually prices bets.
       </p>
 
       {loading && <p className="muted">Loading…</p>}
@@ -42,7 +44,8 @@ export default function Calibration({ refreshKey }) {
             <tr>
               <th>Bucket</th>
               <th>Graded legs</th>
-              <th>Hit rate</th>
+              <th>Hit rate (raw)</th>
+              <th>Hit rate (used)</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -52,6 +55,7 @@ export default function Calibration({ refreshKey }) {
                 <td>{b.label}</td>
                 <td>{b.n}</td>
                 <td className={b.hitRatePct >= 50 ? "pos" : "neg"}>{b.hitRatePct}%</td>
+                <td className={b.shrunkRatePct >= 50 ? "pos" : "neg"}>{b.shrunkRatePct}%</td>
                 <td>
                   {b.calibrated ? (
                     <span className="badge badge-ok">calibrated — influencing ranking</span>

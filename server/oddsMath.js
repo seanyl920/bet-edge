@@ -50,30 +50,58 @@ export function marketVig(decimalOdds) {
 
 /**
  * Expected value of a single bet, as a fraction of stake.
+ *
+ * Confirmed real bug (external review, Sept 2026): this always treated
+ * "doesn't win" as "loses the whole stake." That's right for moneylines,
+ * but an integer point-spread (or a pick'em, 0) can PUSH — the actual
+ * margin lands exactly on the line — and a push refunds the stake rather
+ * than losing it. Reproduced: an NFL -3 spread (margin=3 is the single
+ * most common NFL final-margin gap) priced with the old formula silently
+ * counted that real, non-trivial push mass as a loss, understating EV on
+ * every integer-spread bet. `pushProb` (0 by default, so every other
+ * market's math is byte-for-byte unchanged) lets a caller carve that mass
+ * out as a true zero-sum outcome instead.
  * @param {number} trueProb - your model's win probability for the side you'd bet
  * @param {number} decimalOdds - the price you'd actually get (best line shopped)
+ * @param {number} [pushProb] - probability of an exact push (refund), if applicable
  */
-export function expectedValue(trueProb, decimalOdds) {
+export function expectedValue(trueProb, decimalOdds, pushProb = 0) {
   if (trueProb == null || decimalOdds == null) return null;
-  return trueProb * (decimalOdds - 1) - (1 - trueProb);
+  const loseProb = Math.max(0, 1 - trueProb - pushProb);
+  return trueProb * (decimalOdds - 1) - loseProb;
 }
 
 /**
  * Fractional Kelly stake as a fraction of bankroll. Returns 0 for -EV bets.
+ *
+ * With a push carved out (see expectedValue above), the standard
+ * derivation (maximize E[log(bankroll)]) reduces to the same formula but
+ * normalized over win+lose probability only (a push leaves bankroll
+ * unchanged, so it drops out of the log-growth optimization entirely) —
+ * this is exactly the original formula when pushProb is 0.
  * @param {number} fraction - Kelly fraction to use (1 = full Kelly, 0.25 = quarter Kelly)
+ * @param {number} [pushProb] - probability of an exact push (refund), if applicable
  */
-export function kellyStake(trueProb, decimalOdds, fraction = 0.25) {
+export function kellyStake(trueProb, decimalOdds, fraction = 0.25, pushProb = 0) {
   if (trueProb == null || decimalOdds == null) return 0;
   const b = decimalOdds - 1;
   if (b <= 0) return 0;
-  const f = (trueProb * b - (1 - trueProb)) / b;
+  const loseProb = Math.max(0, 1 - trueProb - pushProb);
+  const denom = b * (trueProb + loseProb);
+  if (denom <= 0) return 0;
+  const f = (trueProb * b - loseProb) / denom;
   return Math.max(0, f * fraction);
+}
+
+/** Standard normal PDF (the density, not the cumulative). */
+export function normalPdf(x) {
+  return 0.3989423 * Math.exp((-x * x) / 2);
 }
 
 /** Standard normal CDF via the Abramowitz-Stegun approximation (no deps). */
 export function normalCdf(x) {
   const t = 1 / (1 + 0.2316419 * Math.abs(x));
-  const d = 0.3989423 * Math.exp((-x * x) / 2);
+  const d = normalPdf(x);
   let p =
     d *
     t *

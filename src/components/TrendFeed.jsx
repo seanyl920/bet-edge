@@ -138,11 +138,20 @@ function TrendCard({ trend, sport, onAddLeg }) {
             // auto-generated legs — it had just quietly resurfaced here, on
             // the manually-added path). trends.js now attaches a real
             // devigged probability per outcome, scoped to that exact point
-            // (see attachDevigProbs). This app's own calibration is only
-            // ever computed for the "Over" side (every trend it generates is
-            // framed as one), so it's only used here when the side actually
-            // is Over — never borrowed for an Under leg.
-            const realProb = o.side === "Over" ? (trend.calibration?.rate ?? o.trueProb) : o.trueProb;
+            // (see attachDevigProbs).
+            //
+            // Confirmed real bug (external review, Sept 2026): the fix above
+            // then got its own regression right here — this used to prefer
+            // `trend.calibration?.rate` for any Over pick, but `trend.calibration`
+            // is the SCORE-BUCKETED ranking calibration (lookupTrendCalibration,
+            // keyed by score band — meant only for ranking trend CARDS before
+            // any line is chosen), not the exact-line one. A hit rate learned
+            // from Over 0.5 could get applied to an Over 1.5 bet on the same
+            // player. `o.trueProb` (set by getTrendPropOdds's own
+            // lookupTrendPointCalibration loop, keyed by this exact side+point)
+            // is already correct for both Over and Under — use it directly,
+            // never override it with the card-level score bucket.
+            const realProb = o.trueProb;
             const disabled = realProb == null;
             return (
               <li key={i}>
@@ -164,6 +173,11 @@ function TrendCard({ trend, sport, onAddLeg }) {
                       market: trend.type,
                       selection: `${o.side}${o.point != null ? ` ${o.point}` : ""}`,
                       americanOdds: o.price,
+                      // Confirmed real gap (external review, Sept 2026): shown
+                      // right here on screen but never carried into the leg
+                      // object — see parlay.js's combineLegs for the same-book
+                      // check this enables.
+                      book: o.book,
                       trueProb: realProb,
                       sport,
                       commenceTime: trend.commenceTime,

@@ -18,9 +18,30 @@ function badRequest(message) {
   return err;
 }
 
+// Confirmed real bug (external review, Sept 2026): nothing rejected the
+// same real-world bet appearing twice in one slip. Reproduced: 10 copies
+// of one -150 pick reported as a combined +16438 at 0% EV — the naive math
+// treats every leg as independent, so N copies of the same leg compound
+// into a payout no sportsbook would honor (no book treats a bet against
+// itself as N independent legs). Identity here is (eventId, market,
+// selection) — the same real outcome, regardless of which book/price it
+// happened to be added at.
+function legIdentityKey(l) {
+  return `${l.eventId ?? ""}|${l.market ?? ""}|${l.selection ?? ""}`;
+}
+
 export function combineLegs(legs) {
   if (!Array.isArray(legs) || legs.length === 0) {
     throw badRequest("legs must be a non-empty array");
+  }
+
+  const seenLegKeys = new Set();
+  for (const l of legs) {
+    const key = legIdentityKey(l);
+    if (seenLegKeys.has(key)) {
+      throw badRequest(`Duplicate leg: "${l.label ?? l.selection ?? key}" appears more than once — a parlay can't include the same real bet twice.`);
+    }
+    seenLegKeys.add(key);
   }
 
   const normalized = legs.map((l, i) => {
@@ -117,6 +138,23 @@ export function combineLegs(legs) {
         `${unresolved.length} leg(s) sharing this game don't have a provable relationship in this app — same-game correlation could make the real probability higher OR lower than naive multiplication suggests, not just lower. Treat the naive number here as a rough reference, not a bound.`
       );
     }
+  }
+
+  // Confirmed real gap (external review, Sept 2026): each leg's best price
+  // is independently line-shopped (see edges.js/trends.js), so the
+  // combined price here can genuinely mix a DraftKings leg with a FanDuel
+  // leg with a Caesars leg — no single sportsbook offers that exact
+  // combination as one bet slip. Warn (not block) when legs span more than
+  // one book, same "show the real number, flag the real caveat" pattern as
+  // the correlation warnings above — an older bet logged before `book` was
+  // tracked (see EdgeFeed.jsx/TrendFeed.jsx/dailyParlay.js) has `book:
+  // undefined` and is excluded from this check rather than counted as a
+  // mismatch against itself.
+  const distinctBooks = new Set(normalized.map((l) => l.book).filter(Boolean));
+  if (distinctBooks.size > 1) {
+    correlationWarnings.push(
+      `These legs are priced across ${distinctBooks.size} different books (${[...distinctBooks].join(", ")}) — each leg's own best price was shopped independently. No single sportsbook necessarily offers this exact combination as one placeable parlay; check that every leg is actually available at whichever book you'd place this at.`
+    );
   }
 
   return {

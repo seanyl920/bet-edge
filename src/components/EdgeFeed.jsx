@@ -124,6 +124,15 @@ export default function EdgeFeed({ sport, onAddLeg, onSelectGame }) {
                         market: e.market,
                         selection: `${e.team}${e.line != null ? ` ${e.line}` : ""}`,
                         americanOdds: e.americanOdds,
+                        // Confirmed real gap (external review, Sept 2026): the
+                        // book this price actually came from was shown on
+                        // screen (see the table cell above) but never carried
+                        // into the leg object — a combined parlay could mix
+                        // a DraftKings leg with a FanDuel leg with no way to
+                        // even notice, let alone flag, since nothing tracked
+                        // which book each leg was from. See parlay.js's
+                        // combineLegs for the same-book check this enables.
+                        book: e.book,
                         // The blended (Elo shrunk toward market) probability —
                         // the number that actually produced the EV/Kelly shown —
                         // not the raw Elo estimate. See edges.js's blendWithMarket.

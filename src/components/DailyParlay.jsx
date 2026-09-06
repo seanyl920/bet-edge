@@ -50,6 +50,10 @@ export default function DailyParlay({ onAddLeg }) {
         market: leg.market,
         selection: leg.selection,
         americanOdds: leg.americanOdds,
+        // Confirmed real gap (external review, Sept 2026) — same as
+        // EdgeFeed.jsx/TrendFeed.jsx's onAddLeg calls; dailyParlay.js now
+        // attaches it, just forward it here too.
+        book: leg.book,
         trueProb: leg.trueProb,
         sport: leg.sport,
         commenceTime: leg.commenceTime,
