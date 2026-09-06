@@ -76,7 +76,7 @@ function evalOverUnder(actual, side, point) {
   return null;
 }
 
-async function gradeTrendLeg(leg) {
+async function gradeTrendLeg(leg, { getBatterGameLogFn, getPitcherGameLogFn }) {
   const ctx = leg.context ?? {};
   if (!ctx.playerId || !ctx.trendType) {
     return { ...baseInfo(leg), hit: null, note: "No player snapshot captured for this leg (likely an older bet) — can't grade it." };
@@ -84,7 +84,7 @@ async function gradeTrendLeg(leg) {
 
   let log;
   try {
-    log = ctx.trendType === "pitcherK" ? await getPitcherGameLog(ctx.playerId) : await getBatterGameLog(ctx.playerId);
+    log = ctx.trendType === "pitcherK" ? await getPitcherGameLogFn(ctx.playerId) : await getBatterGameLogFn(ctx.playerId);
   } catch (err) {
     return { ...baseInfo(leg), hit: null, note: `Couldn't fetch the player's game log: ${err.message}` };
   }
@@ -108,7 +108,7 @@ async function gradeTrendLeg(leg) {
   return { ...baseInfo(leg), hit, note: `${predicted} ${actualText}` };
 }
 
-async function gradeEdgeLeg(sport, leg) {
+async function gradeEdgeLeg(sport, leg, { getScoreboardFn }) {
   const ctx = leg.context ?? {};
   const datesParam = toDatesParam(leg.commenceTime);
   if (!datesParam || !leg.eventId) {
@@ -117,7 +117,7 @@ async function gradeEdgeLeg(sport, leg) {
 
   let scoreboard;
   try {
-    scoreboard = await getScoreboard(sport, { datesParam });
+    scoreboard = await getScoreboardFn(sport, { datesParam });
   } catch (err) {
     return { ...baseInfo(leg), hit: null, note: `Couldn't reach ESPN for the final score: ${err.message}` };
   }
@@ -129,22 +129,52 @@ async function gradeEdgeLeg(sport, leg) {
 
   const homeMargin = event.home.score - event.away.score;
   let hit = null;
+  let push = false;
   if (leg.market === "moneyline") {
+    // A tie (homeMargin === 0) is a real, if rare, push for a moneyline
+    // bet (regular-season NFL ties, in particular) — hit stays null
+    // either way, but push is tracked separately now so the note below
+    // can say so explicitly instead of just "ungraded."
     if (homeMargin !== 0) hit = ctx.side === "home" ? homeMargin > 0 : ctx.side === "away" ? homeMargin < 0 : null;
+    else push = true;
   } else if (leg.market === "spread" && ctx.line != null) {
     const margin = ctx.side === "home" ? homeMargin : -homeMargin;
     const cover = margin + ctx.line;
+    // An integer line landing exactly on the actual margin is a real push
+    // (see elo.js's pushProbability for why this is a genuine, non-trivial
+    // outcome for a spread like -3 or -7, not just a rounding edge case).
     if (cover !== 0) hit = cover > 0;
+    else push = true;
   }
 
-  const predicted = `Predicted: model ${Math.round((ctx.modelProb ?? 0) * 100)}% vs market ${Math.round((ctx.marketProb ?? 0) * 100)}%.`;
-  const actualText = `Final: ${event.away.name} ${event.away.score} @ ${event.home.name} ${event.home.score}.`;
+  // Confirmed real bug (self-audit, Sept 2026): ctx.marketProb is a
+  // genuinely real `null` whenever no single book quoted BOTH sides of
+  // this market (see edges.js's consensusAndBest — bestHome/bestAway can
+  // exist from one book while consensus.home/away stays null because no
+  // book offered a full two-sided quote to devig against). `?? 0` turned
+  // that real "unknown" into a fabricated "0%," which reads as "the
+  // market said this side had no chance" — the opposite of the truth.
+  // Same for ctx.modelProb, defensively (should always be real, but never
+  // worth risking the same fabrication if it somehow isn't).
+  const modelPctText = ctx.modelProb != null ? `${Math.round(ctx.modelProb * 100)}%` : "unknown";
+  const marketPctText = ctx.marketProb != null ? `${Math.round(ctx.marketProb * 100)}%` : "unavailable";
+  const predicted = `Predicted: model ${modelPctText} vs market ${marketPctText}.`;
+  const actualText = `Final: ${event.away.name} ${event.away.score} @ ${event.home.name} ${event.home.score}.${push ? " — push, landed exactly on the line, not counted." : ""}`;
 
   return { ...baseInfo(leg), hit, note: `${predicted} ${actualText}` };
 }
 
-/** Analyze every leg of a settled bet against what actually happened. */
-export async function analyzeBet(bet) {
+/**
+ * Analyze every leg of a settled bet against what actually happened.
+ * `getScoreboardFn`/`getBatterGameLogFn`/`getPitcherGameLogFn` default to
+ * the real espn.js/mlbData.js functions — overridable so tests can exercise
+ * this module's own grading logic (push detection, sport dispatch, error
+ * handling) with stubs instead of live network access.
+ */
+export async function analyzeBet(
+  bet,
+  { getScoreboardFn = getScoreboard, getBatterGameLogFn = getBatterGameLog, getPitcherGameLogFn = getPitcherGameLog } = {}
+) {
   const legs = Array.isArray(bet.legs) && bet.legs.length ? bet.legs : [bet];
 
   const results = await Promise.all(
@@ -158,7 +188,9 @@ export async function analyzeBet(bet) {
       }
       const kind = leg.context?.kind ?? (leg.market && STAT_FOR_TREND_TYPE[leg.market] ? "trend" : "edge");
       try {
-        return kind === "trend" ? await gradeTrendLeg(leg) : await gradeEdgeLeg(sport, leg);
+        return kind === "trend"
+          ? await gradeTrendLeg(leg, { getBatterGameLogFn, getPitcherGameLogFn })
+          : await gradeEdgeLeg(sport, leg, { getScoreboardFn });
       } catch (err) {
         return { ...baseInfo(leg), hit: null, note: `Grading failed: ${err.message}` };
       }

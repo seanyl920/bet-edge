@@ -187,7 +187,11 @@ function makeEdge({ event, sport, market, side, team, line, best, modelProb, mar
 // used to call recordPrediction() without awaiting it — fire-and-forget,
 // racing any read that happened shortly after (e.g. predictionEval.js
 // grading moments later). async + awaited at every call site below.
-async function logEdgePrediction(edge) {
+// Exported (only) so test/edgesLogging.test.js can exercise this exact
+// leg-shape logic directly (no network needed — recordPrediction() itself
+// is stubbed via PREDICTION_LOG_FILE) rather than needing a full live
+// getEdgeFeed() run just to check a context-field naming bug.
+export async function logEdgePrediction(edge) {
   await recordPrediction({
     sport: edge.sport,
     kind: "edge",
@@ -213,7 +217,18 @@ async function logEdgePrediction(edge) {
         side: edge.side,
         team: edge.team,
         line: edge.line,
-        modelProb: edge.modelProb,
+        // Confirmed real bug (self-audit, Sept 2026): this set modelProb to
+        // the RAW (unblended) Elo estimate — inconsistent with every other
+        // place this exact context shape gets built (EdgeFeed.jsx,
+        // dailyParlay.js's edgeCandidates()), which both correctly use
+        // blendedProb here. postmortem.js's gradeEdgeLeg() reads ctx.modelProb
+        // to build its "Predicted: model X% vs market Y%" note when grading
+        // predictionLog.jsonl records (via predictionEval.js's
+        // evaluatePredictions) — with the old value, that note showed the
+        // RAW Elo number, not the blended probability actually recorded as
+        // predictedProb/graded above. rawEloProb is kept for the actual raw
+        // signal, same as the other two call sites.
+        modelProb: edge.blendedProb,
         rawEloProb: edge.modelProb,
         marketProb: edge.marketProb,
         sampleSize: edge.sampleSize,

@@ -921,6 +921,71 @@ with a fixture first:
   `/api/predictions/eval` directly, real Playwright screenshots at both
   desktop and 390px mobile widths, and `data/bets.json`/
   `data/predictionLog.jsonl` confirmed clean throughout.
+- **Self-audit (no external review this round — Claude read through every
+  previously-untested server module looking for real bugs) — 4 confirmed
+  findings, all reproduced against the actual code before fixing, plus
+  first-ever test coverage for 10 modules that had none at all:**
+  1. **A closing-line-value capture failure always blamed a missing API
+     key, even with a real one configured.** `clv.js`'s trend-leg branch
+     treated `getTrendPropOdds()`'s `available: false` as "ODDS_API_KEY
+     not configured" unconditionally — the exact confusion already fixed
+     elsewhere (`trends.js`/`TrendFeed.jsx`/`dailyParlay.js`) but never
+     applied here, so the far more common real cause (this one game's
+     props just haven't matched an odds event yet) was misreported every
+     time. Separately, the edge-leg branch never checked
+     `hasOddsApiKey()` at all before calling `getGameOddsTable()` — with
+     no key configured, that surfaced as a raw, uncoded 500 instead of a
+     clear 400. Fixed: both branches now report the real reason, matching
+     every other caller's pattern.
+  2. **A postmortem note could show a fabricated "market 0%" or "model
+     0%" instead of "unavailable."** `postmortem.js`'s `gradeEdgeLeg()`
+     used `ctx.marketProb ?? 0` — but `ctx.marketProb` is a genuinely real
+     `null` whenever no single book quoted both sides of a market (see
+     `edges.js`'s `consensusAndBest`: a best price can exist from one book
+     while the two-sided consensus needed to devig stays null). The old
+     text read as "the market said this side had no chance," the opposite
+     of the truth ("no market data was available at all"). Fixed: shows
+     "unknown"/"unavailable" for a genuinely missing value, never a
+     fabricated 0%. Added alongside: explicit push detection for a
+     moneyline tie and an exact-integer-spread cover (the outcome was
+     already correctly excluded from win/loss counts — `hit` stayed
+     `null` — but the note gave no explanation, just a generic final
+     score), matching the existing pattern already used for trend-leg
+     pushes.
+  3. **A logged edge prediction's "Predicted: model X%" text showed the
+     raw, unblended Elo estimate — not the blended probability actually
+     used to price and grade that same prediction.** `edges.js`'s
+     `logEdgePrediction()` set the logged leg's `context.modelProb` to
+     `edge.modelProb` (raw Elo) — inconsistent with the identical context
+     shape built by `EdgeFeed.jsx` and `dailyParlay.js`'s
+     `edgeCandidates()`, both of which correctly use `edge.blendedProb`
+     here. Since `predictionEval.js`'s `evaluatePredictions()` re-grades
+     every logged prediction through this exact code path, every
+     auto-logged edge's postmortem note showed the wrong number. Fixed:
+     `context.modelProb` is now the blended probability everywhere,
+     consistently; the raw Elo number is kept separately as
+     `rawEloProb`, same as the other two call sites.
+  4. **`betlog.js` had no way to test against anything but the real bet
+     log**, and its own `writeAll()` `mkdir`ed the hardcoded data
+     directory rather than wherever the (until now, non-overridable)
+     `FILE` actually pointed — harmless in production (both are the same
+     path) but would have silently failed to create a nested directory
+     for an overridden path. Added a `BET_LOG_FILE` env override (same
+     pattern `predictionLog.js` already used) and fixed `writeAll()` to
+     `mkdir` `FILE`'s own directory, enabling real test coverage of the
+     actual CRUD/validation/concurrency-safety logic for the first time.
+
+  Also added first-ever test coverage (no bugs found, but zero prior
+  coverage on logic this central deserved locking in) for `cache.js`
+  (the TTL cache guarding The Odds API's tight free-tier quota),
+  `dateUtil.js`, `streaks.js`, `statFind.js`, `teamMatch.js` (the
+  doubleheader-disambiguation logic, which has two other real bugs
+  documented in its own comments), and `weather.js`'s pure helpers.
+
+  All 4 findings verified with new/extended tests (193 total passing, up
+  from 105 — 88 new tests across 10 new test files, none of which had any
+  coverage before this round), `node --check` on every touched server
+  file, `npm run build`, and `data/bets.json` confirmed clean throughout.
 
 ## Today's best bets
 
@@ -1427,6 +1492,16 @@ test/
   propModel.test.js                          node:test coverage for the Poisson strikeout model (hand-checked lambda/over-under math)
   modelRegistry.test.js                        node:test coverage for the challenger/promote gate
   bestBets.test.js                               node:test coverage for "today's best bets" — EV ranking, never combining
+  clv.test.js                                      node:test coverage for closing-line capture (self-audit round: no-key vs event-not-found)
+  postmortem.test.js                                 node:test coverage for bet grading — pushes, fabricated-probability fix, doubleheader safety
+  betlog.test.js                                      node:test coverage for bet CRUD/validation/write-serialization (BET_LOG_FILE override)
+  cache.test.js                                         node:test coverage for the TTL cache (concurrent-fetch sharing, failure eviction)
+  teamMatch.test.js                                       node:test coverage for ESPN/Odds-API event matching, incl. doubleheader disambiguation
+  dateUtil.test.js                                          node:test coverage for the local-calendar-day helper
+  streaks.test.js                                             node:test coverage for streak/rate math
+  statFind.test.js                                              node:test coverage for ESPN stat-blob deep search
+  weather.test.js                                                node:test coverage for degToCompass/weatherImpactNote
+  edgesLogging.test.js                                             node:test coverage for logEdgePrediction (self-audit: modelProb field bug)
 src/
   App.jsx           Tabs (decision-ordered — see Known-issue history round 7), sport switcher, slip state
   api.js             Frontend fetch wrappers

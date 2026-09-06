@@ -23,7 +23,11 @@ import { americanToDecimal } from "./oddsMath.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, "..", "data");
-const FILE = path.join(DATA_DIR, "bets.json");
+// Overridable so tests can point this at a throwaway file instead of the
+// real bet log — same pattern predictionLog.js already uses for the same
+// reason. Read once at module load; a real deployment never needs to
+// touch this.
+const FILE = process.env.BET_LOG_FILE ? path.resolve(process.env.BET_LOG_FILE) : path.join(DATA_DIR, "bets.json");
 
 const RESULT_VALUES = new Set(["pending", "win", "loss", "push", "void"]);
 // win/loss/push affect staked/profit/ROI; void is a finished bet with
@@ -60,7 +64,9 @@ async function readAll() {
 }
 
 async function writeAll(bets) {
-  await mkdir(DATA_DIR, { recursive: true });
+  // mkdir the directory FILE actually lives in — not the hardcoded
+  // DATA_DIR — now that FILE is overridable (see above) for tests.
+  await mkdir(path.dirname(FILE), { recursive: true });
   const tmp = `${FILE}.tmp-${process.pid}-${Date.now()}`;
   await writeFile(tmp, JSON.stringify(bets, null, 2));
   await rename(tmp, FILE); // atomic on the same filesystem
