@@ -1,12 +1,14 @@
 // Test coverage for kalshiApi.js. Covers what's verifiable without live
 // network access (this sandbox can't reach kalshi.com — see the file's own
 // header comment for what the user already confirmed live: base URL,
-// /markets response shape, the decimal-dollar price string format, and
-// real rate limiting on this public endpoint). NBA/MLB series naming and
-// the moneyline-equivalent (near-zero strike) contract remain UNVERIFIED.
+// /markets response shape, the decimal-dollar price string format, real
+// rate limiting on this public endpoint, and the KXNFLGAME/KXMLBGAME/
+// KXNBAGAME moneyline series). The groupGameWinnerMarkets tests below use
+// real (trimmed) market objects from the user's own live curl output, not
+// fabricated fixtures.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getMarkets, getEvents, getMarketOrderbook, dollarStringToProb } from "../server/kalshiApi.js";
+import { getMarkets, getEvents, getMarketOrderbook, dollarStringToProb, groupGameWinnerMarkets } from "../server/kalshiApi.js";
 import { clearCache } from "../server/cache.js";
 
 const originalFetch = globalThis.fetch;
@@ -100,4 +102,83 @@ test("getMarkets caches repeated calls with the same params — doesn't refetch 
   const second = await getMarkets({ seriesTicker: "KXCACHETEST-fixed" });
   assert.equal(calls, 1, "the second call must be served from cache, not re-fetched");
   assert.deepEqual(first, second);
+});
+
+// Real (trimmed) KXNFLGAME markets from the user's confirmed live curl
+// output — the Denver @ Kansas City game.
+const REAL_NFL_GAME_MARKETS = [
+  {
+    event_ticker: "KXNFLGAME-26SEP14DENKC",
+    occurrence_datetime: "2026-09-15T03:15:00Z",
+    ticker: "KXNFLGAME-26SEP14DENKC-KC",
+    yes_sub_title: "Kansas City",
+    yes_ask_dollars: "0.5700",
+    yes_bid_dollars: "0.5600",
+  },
+  {
+    event_ticker: "KXNFLGAME-26SEP14DENKC",
+    occurrence_datetime: "2026-09-15T03:15:00Z",
+    ticker: "KXNFLGAME-26SEP14DENKC-DEN",
+    yes_sub_title: "Denver",
+    yes_ask_dollars: "0.4500",
+    yes_bid_dollars: "0.4400",
+  },
+];
+
+// Real (trimmed) KXMLBGAME markets — Pittsburgh @ Chicago White Sox,
+// confirmed to embed a start-time in the event_ticker (doubleheader
+// disambiguation), unlike NFL/NBA's date-only event tickers.
+const REAL_MLB_GAME_MARKETS = [
+  {
+    event_ticker: "KXMLBGAME-26SEP091940PITCWS",
+    occurrence_datetime: "2026-09-10T02:40:00Z",
+    ticker: "KXMLBGAME-26SEP091940PITCWS-PIT",
+    yes_sub_title: "Pittsburgh",
+    yes_ask_dollars: "0.4700",
+    yes_bid_dollars: "0.4500",
+  },
+  {
+    event_ticker: "KXMLBGAME-26SEP091940PITCWS",
+    occurrence_datetime: "2026-09-10T02:40:00Z",
+    ticker: "KXMLBGAME-26SEP091940PITCWS-CWS",
+    yes_sub_title: "Chicago WS",
+    yes_ask_dollars: "0.6100",
+    yes_bid_dollars: "0.4800",
+  },
+];
+
+test("groupGameWinnerMarkets groups one real KXNFLGAME event's two team rows into a single game entry", () => {
+  const [game] = groupGameWinnerMarkets(REAL_NFL_GAME_MARKETS);
+  assert.equal(game.eventTicker, "KXNFLGAME-26SEP14DENKC");
+  assert.equal(game.gameTime, "2026-09-15T03:15:00Z");
+  assert.equal(game.teams.length, 2);
+  const kc = game.teams.find((t) => t.name === "Kansas City");
+  const den = game.teams.find((t) => t.name === "Denver");
+  assert.equal(kc.ticker, "KXNFLGAME-26SEP14DENKC-KC");
+  assert.equal(kc.prob, 0.565); // mid of 0.56/0.57
+  assert.equal(den.prob, 0.445); // mid of 0.44/0.45
+});
+
+test("groupGameWinnerMarkets keeps two different event_tickers as two separate games", () => {
+  const games = groupGameWinnerMarkets([...REAL_NFL_GAME_MARKETS, ...REAL_MLB_GAME_MARKETS]);
+  assert.equal(games.length, 2);
+  const tickers = games.map((g) => g.eventTicker).sort();
+  assert.deepEqual(tickers, ["KXMLBGAME-26SEP091940PITCWS", "KXNFLGAME-26SEP14DENKC"]);
+});
+
+test("groupGameWinnerMarkets falls back to whichever side of the book has a real price when the other is missing", () => {
+  const [game] = groupGameWinnerMarkets([
+    { event_ticker: "E1", ticker: "E1-A", yes_sub_title: "Team A", yes_ask_dollars: "0.3000", yes_bid_dollars: null },
+  ]);
+  assert.equal(game.teams[0].prob, 0.3);
+});
+
+test("groupGameWinnerMarkets returns an empty array (never throws) for no markets", () => {
+  assert.deepEqual(groupGameWinnerMarkets([]), []);
+  assert.deepEqual(groupGameWinnerMarkets(undefined), []);
+});
+
+test("groupGameWinnerMarkets skips a market missing event_ticker rather than crashing or grouping it under 'undefined'", () => {
+  const games = groupGameWinnerMarkets([{ ticker: "orphan", yes_sub_title: "Nobody" }]);
+  assert.deepEqual(games, []);
 });

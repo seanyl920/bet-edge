@@ -54,13 +54,23 @@
 //   this file was missing; the spread ladder is a separate product for
 //   over/under-the-line questions, not a substitute for it.
 //
-// STILL UNVERIFIED, pending a live check: whether KXMLBGAME/KXNBAGAME
-// exist as the same-named moneyline series for those sports (naming
-// pattern strongly suggested by KXNFLGAME <-> KXNFLSPREAD, KXMLBSPREAD,
-// KXNBASPREAD all following "KX<LEAGUE><PRODUCT>" — not yet checked live).
-// Also still unverified: real MLB/NBA player-prop coverage. Nothing here
-// should be trusted for real money until each of those is checked too —
-// same rule this project has applied to every other data source.
+// - CONFIRMED live: KXMLBGAME and KXNBAGAME are real too, same shape as
+//   KXNFLGAME (team-abbreviation ticker suffix, strike_type "structured",
+//   no floor_strike, one Yes/No contract per team). So "KX<LEAGUE>GAME"
+//   for moneyline / "KX<LEAGUE>SPREAD" for the strike ladder is a real,
+//   general convention across NFL/MLB/NBA, not just an NFL quirk.
+//   KXMLBGAME's event_ticker embeds a start-time (e.g.
+//   "KXMLBGAME-26SEP091940PITCWS", matching KXMLBSPREAD's own dated-event
+//   format) — needed since the same two MLB teams can play more than once
+//   in a day (doubleheaders); KXNFLGAME/KXNBAGAME's event_ticker is
+//   date-only (e.g. "KXNBAGAME-26OCT20OKCSAS"), matching one game per
+//   matchup per day for those sports.
+//
+// STILL UNVERIFIED: real MLB/NBA player-prop coverage (NFL prop coverage
+// was seen in passing during the broader diagnostic scan — TD props,
+// MVP/award markets — but not checked for MLB/NBA specifically). Nothing
+// here should be trusted for real money until that's checked too — same
+// rule this project has applied to every other data source.
 
 import { cached } from "./cache.js";
 
@@ -156,4 +166,53 @@ export function dollarStringToProb(dollarStr) {
   if (dollarStr == null) return null;
   const n = Number(dollarStr);
   return Number.isFinite(n) ? n : null;
+}
+
+function midProb(bidDollars, askDollars) {
+  const bid = dollarStringToProb(bidDollars);
+  const ask = dollarStringToProb(askDollars);
+  if (bid == null && ask == null) return null;
+  if (bid == null) return ask;
+  if (ask == null) return bid;
+  return (bid + ask) / 2;
+}
+
+/**
+ * Groups a flat KX<LEAGUE>GAME markets array (confirmed live for
+ * KXNFLGAME/KXMLBGAME/KXNBAGAME — one market row per team, two rows per
+ * game) by event_ticker into one entry per game with both teams' prices
+ * alongside each other, ready for matching against an ESPN scoreboard.
+ *
+ * Each team's `prob` is the mid of yes_bid/yes_ask (not just yes_ask) —
+ * the ask alone is what it costs to buy right now, biased slightly high
+ * by the market's spread; the mid is a steadier estimate of the market's
+ * actual view for research purposes. `name` is Kalshi's own shorthand for
+ * that side (yes_sub_title) — confirmed to disambiguate multi-team
+ * cities with a trailing letter (e.g. "Los Angeles C" for the Chargers
+ * vs "Los Angeles R" for the Rams, "New York G" vs "New York J"), not a
+ * full franchise name — so matching this against ESPN's team names needs
+ * its own lookup, not the loose substring match teamMatch.js uses for
+ * The Odds API's full team names. `gameTime` is occurrence_datetime, the
+ * actual scheduled kickoff/first-pitch — confirmed distinct from (and
+ * earlier than) close_time/expiration_time, which pad in a settlement
+ * buffer after the game ends.
+ */
+export function groupGameWinnerMarkets(markets) {
+  const byEvent = new Map();
+  for (const m of markets ?? []) {
+    if (!m?.event_ticker) continue;
+    if (!byEvent.has(m.event_ticker)) {
+      byEvent.set(m.event_ticker, {
+        eventTicker: m.event_ticker,
+        gameTime: m.occurrence_datetime ?? null,
+        teams: [],
+      });
+    }
+    byEvent.get(m.event_ticker).teams.push({
+      ticker: m.ticker ?? null,
+      name: m.yes_sub_title ?? null,
+      prob: midProb(m.yes_bid_dollars, m.yes_ask_dollars),
+    });
+  }
+  return Array.from(byEvent.values());
 }
