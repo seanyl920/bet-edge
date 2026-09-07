@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { requireSport, SPORTS } from "./sports.js";
 import { getUpcomingGames, getGameInjuries } from "./games.js";
 import { getEdgeFeed, getGameOddsTable } from "./edges.js";
+import { getKalshiEdgeFeed } from "./kalshiEdges.js";
 import { getTrendFeed, getTrendPropOdds } from "./trends.js";
 import { getDailyParlay } from "./dailyParlay.js";
 import { getTodaysBestBets } from "./bestBets.js";
@@ -88,6 +89,20 @@ app.get(
     const sport = requireSport(req.params.sport);
     const threshold = req.query.threshold != null ? Number(req.query.threshold) : 0.02;
     res.json(await getEdgeFeed(sport, { threshold }));
+  })
+);
+
+// Kalshi-priced moneyline edges (see kalshiEdges.js) — additive, alongside
+// the Odds-API-based /edges above, not a replacement for it (yet). The
+// user bets exclusively on Kalshi, so this is the pricing source that
+// actually matters for what they can act on; kept as its own endpoint
+// while spread/prop coverage and frontend wiring are still being built out.
+app.get(
+  "/api/:sport/kalshi-edges",
+  wrap(async (req, res) => {
+    const sport = requireSport(req.params.sport);
+    const threshold = req.query.threshold != null ? Number(req.query.threshold) : 0.02;
+    res.json(await getKalshiEdgeFeed(sport, { threshold }));
   })
 );
 

@@ -26,7 +26,9 @@ import {
 
 // Below this many completed games for BOTH teams, Elo is mostly still at (or
 // near) its 1500 starting point and isn't worth trusting for real edges.
-const MIN_SAMPLE_SIZE = 3;
+// Exported for kalshiEdges.js — the same threshold applies regardless of
+// which market's prices are being compared against the model.
+export const MIN_SAMPLE_SIZE = 3;
 
 // How much to trust the Elo model over the market's own devigged price when
 // computing EV/Kelly. Raw Elo vs market (weight 1.0) means a weak Elo
@@ -39,7 +41,10 @@ const MIN_SAMPLE_SIZE = 3;
 const ELO_TRUST_FULL_SAMPLE = 20; // games at which Elo gets its maximum trust weight
 const ELO_TRUST_MAX_WEIGHT = 0.5;
 
-function blendWithMarket(modelProb, marketProb, sampleSize) {
+// Exported so kalshiEdges.js (Kalshi-priced moneylines) can reuse the exact
+// same Elo/market blending — no reason for the two pricing sources to
+// disagree on how much to trust a thin Elo sample.
+export function blendWithMarket(modelProb, marketProb, sampleSize) {
   if (marketProb == null) return modelProb; // nothing to blend toward
   const w = Math.min(sampleSize / ELO_TRUST_FULL_SAMPLE, 1) * ELO_TRUST_MAX_WEIGHT;
   return w * modelProb + (1 - w) * marketProb;

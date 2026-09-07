@@ -8,6 +8,8 @@ export const SPORTS = {
     espnSport: "football",
     espnLeague: "nfl",
     oddsApiKey: "americanfootball_nfl",
+    kalshiGameSeries: "KXNFLGAME", // confirmed live — see kalshiApi.js's header
+
     elo: {
       k: 20,
       homeFieldAdvantage: 48, // Elo points, ~538's NFL estimate
@@ -25,6 +27,8 @@ export const SPORTS = {
     espnSport: "basketball",
     espnLeague: "nba",
     oddsApiKey: "basketball_nba",
+    kalshiGameSeries: "KXNBAGAME", // confirmed live — see kalshiApi.js's header
+
     elo: {
       k: 20,
       homeFieldAdvantage: 100,
@@ -39,6 +43,8 @@ export const SPORTS = {
     espnSport: "baseball",
     espnLeague: "mlb",
     oddsApiKey: "baseball_mlb",
+    kalshiGameSeries: "KXMLBGAME", // confirmed live — see kalshiApi.js's header
+
     elo: {
       k: 4, // MLB has ~10x the games of NFL and is high-variance per game; move ratings slowly
       homeFieldAdvantage: 24,

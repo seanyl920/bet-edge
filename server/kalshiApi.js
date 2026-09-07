@@ -183,10 +183,12 @@ function midProb(bidDollars, askDollars) {
  * game) by event_ticker into one entry per game with both teams' prices
  * alongside each other, ready for matching against an ESPN scoreboard.
  *
- * Each team's `prob` is the mid of yes_bid/yes_ask (not just yes_ask) —
- * the ask alone is what it costs to buy right now, biased slightly high
- * by the market's spread; the mid is a steadier estimate of the market's
- * actual view for research purposes. `name` is Kalshi's own shorthand for
+ * Each team's `prob` is the mid of yes_bid/yes_ask — a steadier estimate
+ * of the market's actual fair view, for comparing against a model.
+ * `askProb` is yes_ask alone: the real, actionable cost to buy Yes on
+ * that team right now, which is what an actual EV/Kelly calculation has
+ * to price off of (the mid isn't a price you can actually transact at).
+ * `name` is Kalshi's own shorthand for
  * that side (yes_sub_title) — confirmed to disambiguate multi-team
  * cities with a trailing letter (e.g. "Los Angeles C" for the Chargers
  * vs "Los Angeles R" for the Rams, "New York G" vs "New York J"), not a
@@ -212,6 +214,7 @@ export function groupGameWinnerMarkets(markets) {
       ticker: m.ticker ?? null,
       name: m.yes_sub_title ?? null,
       prob: midProb(m.yes_bid_dollars, m.yes_ask_dollars),
+      askProb: dollarStringToProb(m.yes_ask_dollars),
     });
   }
   return Array.from(byEvent.values());
