@@ -20,19 +20,39 @@
 //   strike — "Kansas City wins by over 7.5/6.5/5.5 points?"). Kalshi's
 //   spread isn't one two-sided market the way a sportsbook quotes -110/-110
 //   at a single line — it's a LADDER of separate binary contracts, one per
-//   threshold, each with its own yes/no price. KXWNBASPREAD/KXNHLSPREAD
-//   confirmed to exist as real series too (empty of open markets at check
-//   time, not tested for real games). Rate limiting is real on this public
-//   endpoint (repeated "too_many_requests" errors hit scanning ~50 series
-//   back-to-back) — surfaced below via a RATE_LIMITED error code so a
-//   caller can treat it as "temporarily unavailable," not a hard failure.
+//   threshold, each with its own yes/no price. The full DEN@KC ladder was
+//   pulled live and its LOWEST strike is 1.5 (both "...-KC2"/floor 1.5 and
+//   the DEN mirror) — there is no near-zero strike in this ladder, so a
+//   spread contract alone can't stand in for a moneyline; a game decided
+//   by exactly 1 point isn't resolved "yes" by any contract here. That
+//   overturns this file's earlier working guess (see git history).
+// - KXMLBSPREAD confirmed real and populated too, same ladder shape —
+//   e.g. event_tickers "KXMLBSPREAD-26SEP061820MINCWS" (Minnesota @
+//   Chicago White Sox) and "KXMLBSPREAD-26SEP072110CINLAD" (Cincinnati @
+//   LA Dodgers). So the KX<LEAGUE>SPREAD naming convention generalizes
+//   across at least NFL and MLB. KXNBASPREAD confirmed to exist as a real
+//   series name too, but had zero open markets at check time (most likely
+//   just an NBA-offseason/no-games-scheduled gap, not a naming miss —
+//   not yet re-checked once games are live). KXWNBASPREAD/KXNHLSPREAD
+//   also confirmed to exist as real series (also empty of open markets at
+//   check time).
+// - Rate limiting is real on this public endpoint (repeated
+//   "too_many_requests" errors hit scanning ~50 series back-to-back) —
+//   surfaced below via a RATE_LIMITED error code so a caller can treat it
+//   as "temporarily unavailable," not a hard failure.
 //
-// STILL UNVERIFIED, pending a live check: the moneyline-equivalent series
-// name (a spread ladder's lowest strike, near 0, would function as one —
-// not yet confirmed whether such a strike exists for a real game), the
-// exact series naming for NBA/MLB (pattern suggests KXNBASPREAD/
-// KXMLBSPREAD by analogy with KXNFLSPREAD/KXWNBASPREAD/KXNHLSPREAD, not
-// confirmed live), and real MLB/NBA player-prop coverage. Nothing here
+// STILL UNVERIFIED, pending a live check: whether Kalshi's actual
+// moneyline-equivalent lives in a wholly separate series rather than the
+// spread ladder. Independent third-party write-ups (not Kalshi's own
+// docs, and not yet checked against a live response the way everything
+// above was) describe a single-contract "game winner" series named
+// KXNFLGAME, with the same date/matchup ticker shape confirmed live for
+// KXNFLSPREAD (e.g. "KXNFLGAME-26SEP13GBMIN" for a Packers @ Vikings
+// game) — one Yes/No contract per game, Yes backing one team, rather than
+// a ladder. By analogy this would make KXMLBGAME/KXNBAGAME the moneyline
+// series for those sports, but that's an unverified guess pending a real
+// curl (`curl -s "https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker=KXNFLGAME&status=open&limit=50"`).
+// Also still unverified: real MLB/NBA player-prop coverage. Nothing here
 // should be trusted for real money until each of those is checked too —
 // same rule this project has applied to every other data source.
 
