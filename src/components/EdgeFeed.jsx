@@ -55,6 +55,22 @@ export default function EdgeFeed({ sport, onAddLeg, onSelectGame }) {
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="error">{error}</p>}
 
+      {/* Confirmed real gap: getEdgeFeed() has captured The Odds API's own
+          x-requests-remaining header since this app's first version, but
+          nothing in the frontend ever showed it — a user hit their monthly
+          quota with no warning at all. This is a snapshot from whenever
+          this data was actually fetched (a cache hit — 30 min TTL, see
+          oddsApi.js — reuses the same number rather than re-checking), not
+          a live counter, but it's still the only signal available short of
+          checking the-odds-api.com's own dashboard. */}
+      {data?.quota?.remaining != null && (
+        <p className={`muted small ${Number(data.quota.remaining) < 50 ? "warning-note" : ""}`}>
+          Odds API quota: {data.quota.remaining} request(s) remaining this billing period (as of the last
+          fetch — see the-odds-api.com's dashboard for a live count).
+          {Number(data.quota.remaining) < 50 && " Getting low — see README's Known-issue history for ways to stretch it further."}
+        </p>
+      )}
+
       {data && !data.oddsAvailable && (
         <p className="muted">
           No <code>ODDS_API_KEY</code> configured — game list and Elo ratings still work below,

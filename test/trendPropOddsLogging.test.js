@@ -19,6 +19,10 @@ import path from "node:path";
 
 const dir = await mkdtemp(path.join(tmpdir(), "trendodds-test-"));
 process.env.PREDICTION_LOG_FILE = path.join(dir, "predictionLog.jsonl");
+// getOdds/getPlayerProps now persist their cache to disk (see cache.js) —
+// without this override, this test would write to the real
+// data/oddsCache.json on every run instead of a throwaway file.
+process.env.ODDS_CACHE_FILE = path.join(dir, "oddsCache.json");
 process.env.ODDS_API_KEY = "test-key";
 
 const { getTrendPropOdds } = await import("../server/trends.js");

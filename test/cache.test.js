@@ -6,7 +6,14 @@
 // behavior.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cached, cacheStats, clearCache } from "../server/cache.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+process.env.ODDS_CACHE_FILE = path.join(await mkdtemp(path.join(tmpdir(), "cache-test-")), "oddsCache.json");
+const dir = path.dirname(process.env.ODDS_CACHE_FILE);
+
+const { cached, cacheStats, clearCache } = await import("../server/cache.js");
 
 function uniqueKey(label) {
   return `test:${label}:${Math.random().toString(36).slice(2)}`;
@@ -90,4 +97,55 @@ test("clearCache() with no prefix clears everything", async () => {
   await cached(uniqueKey("clearall"), 10_000, async () => "x");
   clearCache();
   assert.equal(cacheStats().size, 0);
+});
+
+test("cached({persist: true}) survives the in-memory store being forgotten — the actual scenario a server restart reproduces", async () => {
+  const key = uniqueKey("persist-restart");
+  let calls = 0;
+  const fn = async () => {
+    calls += 1;
+    return `persisted-value-${calls}`;
+  };
+  const first = await cached(key, 10_000, fn, { persist: true });
+  assert.equal(first, "persisted-value-1");
+
+  // Simulate a restart: clearCache() wipes the in-memory Map exactly like
+  // a fresh `node server/index.js` process would start with an empty one
+  // — but the disk file cached() wrote to is still there.
+  clearCache();
+
+  const second = await cached(key, 10_000, fn, { persist: true });
+  assert.equal(second, "persisted-value-1", "must be restored from disk, not re-fetched, after the in-memory store is gone");
+  assert.equal(calls, 1, "fn must not be called again — this is the actual quota-saving behavior");
+});
+
+test("cached({persist: true}) still re-fetches once the persisted entry's TTL has actually expired", async () => {
+  const key = uniqueKey("persist-expiry");
+  let calls = 0;
+  const fn = async () => {
+    calls += 1;
+    return calls;
+  };
+  await cached(key, 20, fn, { persist: true });
+  clearCache();
+  await new Promise((r) => setTimeout(r, 40));
+  const second = await cached(key, 20, fn, { persist: true });
+  assert.equal(second, 2, "an expired disk entry must not be served as if it were still fresh");
+});
+
+test("cached() without persist never touches disk — a plain call's value is lost across a simulated restart", async () => {
+  const key = uniqueKey("no-persist");
+  let calls = 0;
+  const fn = async () => {
+    calls += 1;
+    return calls;
+  };
+  await cached(key, 10_000, fn); // no persist option
+  clearCache();
+  await cached(key, 10_000, fn);
+  assert.equal(calls, 2, "without persist:true, forgetting the in-memory store must force a real re-fetch (this is the existing, unchanged default behavior)");
+});
+
+test.after(async () => {
+  await rm(dir, { recursive: true, force: true });
 });

@@ -7,7 +7,16 @@ import { cached } from "./cache.js";
 
 const BASE = "https://api.the-odds-api.com/v4";
 const FETCH_TIMEOUT_MS = 8000;
-const ODDS_TTL_MS = 5 * 60 * 1000; // 5 min — balances freshness against the free-tier quota
+// Confirmed real problem: a user hit their monthly quota. 5 min was tuned
+// for catching live line movement, which this personal research tool was
+// never actually trying to do (see README's Honesty & limits — this isn't
+// a live trading terminal). Bumped to 30 min: still plenty fresh for
+// spotting a value bet hours or days before kickoff, and cuts refetch
+// frequency 6x. Combined with cache.js's new disk persistence (see
+// getOdds/getPlayerProps below), a stopped-and-restarted dev server no
+// longer forces a fresh, quota-costing re-fetch the moment the page loads.
+const ODDS_TTL_MS = 30 * 60 * 1000;
+const PLAYER_PROPS_TTL_MS = 30 * 60 * 1000; // was 10 min — same reasoning
 
 export function hasOddsApiKey() {
   return Boolean(process.env.ODDS_API_KEY);
@@ -43,13 +52,19 @@ export async function getOdds(sport, { markets = "h2h,spreads,totals", regions =
     throw err;
   }
   const key = `oddsapi:${sport.oddsApiKey}:${markets}:${regions}`;
-  return cached(key, ODDS_TTL_MS, async () => {
-    const url =
-      `${BASE}/sports/${sport.oddsApiKey}/odds/?apiKey=${process.env.ODDS_API_KEY}` +
-      `&regions=${regions}&markets=${markets}&oddsFormat=american&dateFormat=iso`;
-    const { data, quota } = await getJson(url);
-    return { events: data, quota };
-  });
+  return cached(
+    key,
+    ODDS_TTL_MS,
+    async () => {
+      const url =
+        `${BASE}/sports/${sport.oddsApiKey}/odds/?apiKey=${process.env.ODDS_API_KEY}` +
+        `&regions=${regions}&markets=${markets}&oddsFormat=american&dateFormat=iso`;
+      const { data, quota } = await getJson(url);
+      return { events: data, quota };
+    },
+    // Survives a dev-server restart — see ODDS_TTL_MS's comment above.
+    { persist: true }
+  );
 }
 
 /**
@@ -66,11 +81,18 @@ export async function getPlayerProps(sport, oddsEventId, markets) {
     throw err;
   }
   const key = `oddsapi:props:${sport.oddsApiKey}:${oddsEventId}:${markets}`;
-  return cached(key, 10 * 60 * 1000, async () => {
-    const url =
-      `${BASE}/sports/${sport.oddsApiKey}/events/${oddsEventId}/odds?apiKey=${process.env.ODDS_API_KEY}` +
-      `&regions=us&markets=${markets}&oddsFormat=american&dateFormat=iso`;
-    const { data, quota } = await getJson(url);
-    return { event: data, quota };
-  });
+  return cached(
+    key,
+    PLAYER_PROPS_TTL_MS,
+    async () => {
+      const url =
+        `${BASE}/sports/${sport.oddsApiKey}/events/${oddsEventId}/odds?apiKey=${process.env.ODDS_API_KEY}` +
+        `&regions=us&markets=${markets}&oddsFormat=american&dateFormat=iso`;
+      const { data, quota } = await getJson(url);
+      return { event: data, quota };
+    },
+    // A per-event, credit-costing call — surviving a restart matters even
+    // more here than for the bulk odds above.
+    { persist: true }
+  );
 }

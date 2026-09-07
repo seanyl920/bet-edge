@@ -1001,6 +1001,35 @@ with a fixture first:
   from 105 — 89 new tests across 10 new test files, none of which had any
   coverage before this round), `node --check` on every touched server
   file, `npm run build`, and `data/bets.json` confirmed clean throughout.
+- **User-reported: the Odds API's free-tier monthly quota (~500 req) ran
+  out, with no warning beforehand.** Two real, compounding gaps, neither
+  a bug so much as this app not yet doing what it easily could to stretch
+  a scarce, unpaid quota: (1) `cache.js` was purely in-memory — every
+  `node server/index.js` restart (a plain process, no watch/reload)
+  forgot everything cached, so the very next page load re-fetched bulk
+  odds fresh, across every sport, immediately; a normal dev cycle
+  (restart after each `git pull`, click through tabs to check things)
+  burns through a 500/mo budget fast this way. (2) The Odds API's own
+  `x-requests-remaining` response header had been captured server-side
+  since this app's first version (`edges.js`'s `quota` field) but never
+  shown anywhere — there was no way to see a problem coming. Fixed:
+  `cache.js` gained an opt-in `{ persist: true }` mode (`data/oddsCache.json`,
+  gitignored) that `oddsApi.js`'s two calls now use, so a restart no
+  longer forces an immediate re-fetch of anything still fresh; the bulk-
+  odds and player-props TTLs were both bumped from 5-10 min to 30 min
+  (this is a research tool, not a live trading terminal — a half-hour-old
+  line is still plenty useful, and it cuts refetch frequency several-fold
+  on its own); and the Edge feed tab now shows remaining quota (a
+  snapshot as of the last real fetch, flagged once it drops under 50).
+  See the Architecture section above for the full picture on what this
+  does and doesn't fix — there's no legitimate unlimited-free alternative
+  to trade up to; this is about spending the free tier's 500 requests
+  more deliberately, not finding a way around needing them.
+
+  Verified with new tests (203 total passing, up from 194 — first-ever
+  coverage for `oddsApi.js`, plus new cases in `cache.test.js` for the
+  persist option), `node --check`, `npm run build`, a server boot test,
+  and `data/bets.json` confirmed clean throughout.
 
 ## Today's best bets
 
@@ -1387,6 +1416,36 @@ enough to mean something, and even then only against the specific
 | Win/margin model | Elo, built server-side from this season's completed games | No |
 | Bet log | Local JSON file (`data/bets.json`) | No |
 
+**On the Odds API's ~500 req/mo free tier**: there's no legitimate free
+alternative that does better — real-time multi-book odds aggregation is an
+inherently paid data business (that's the entire reason The Odds API's own
+free tier is capped rather than unlimited), and scraping sportsbook sites
+directly would be fragile (breaks on any page change) and likely violates
+those sites' terms of service, which isn't a tradeoff this project makes.
+What actually helps, and what this app already does:
+- **Cache TTLs are generous on purpose** (30 min for both the bulk odds
+  call and player props — see `oddsApi.js`) — this is a research tool, not
+  a live trading terminal, so a half-hour-old line is still plenty useful.
+- **The cache survives a server restart** (`cache.js`'s `persist: true`
+  option, backed by `data/oddsCache.json`, gitignored) — a `git pull` +
+  restart used to force an immediate, quota-costing re-fetch the moment
+  the page loaded again; now a still-fresh cached response survives that.
+- **Player-prop lookups are already bounded** to `MAX_TREND_ODDS_CHECKS`
+  (8) per daily-parlay/best-bets build, and only ever fetched for a
+  specific trend on an explicit "check odds" click otherwise — never
+  polled automatically.
+- **Remaining quota is now shown in the Edge feed tab** (captured from The
+  Odds API's own `x-requests-remaining` response header) — a snapshot as
+  of the last real fetch, not a live counter, but enough to see a problem
+  coming instead of hitting a wall with no warning.
+
+Once you've actually run out for the month: it resets on a monthly cycle
+from your own account's signup/billing date (check the exact date on
+your [the-odds-api.com](https://the-odds-api.com) account dashboard) —
+until then, everything that doesn't need live odds (Elo ratings, the
+Games tab, MLB trend streaks themselves, weather) keeps working exactly
+as it does today with no key configured at all.
+
 ```
 browser (React)
    │
@@ -1517,6 +1576,7 @@ test/
   statFind.test.js                                              node:test coverage for ESPN stat-blob deep search
   weather.test.js                                                node:test coverage for degToCompass/weatherImpactNote
   edgesLogging.test.js                                             node:test coverage for logEdgePrediction (self-audit: modelProb field bug)
+  oddsApi.test.js                                                    node:test coverage for getOdds/getPlayerProps — quota headers, disk-persisted cache surviving a restart
 src/
   App.jsx           Tabs (decision-ordered — see Known-issue history round 7), sport switcher, slip state
   api.js             Frontend fetch wrappers

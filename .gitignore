@@ -6,3 +6,4 @@ dist
 data/bets.json
 data/dailyParlay.json
 data/predictionLog.jsonl
+data/oddsCache.json
