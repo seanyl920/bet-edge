@@ -41,17 +41,23 @@
 //   surfaced below via a RATE_LIMITED error code so a caller can treat it
 //   as "temporarily unavailable," not a hard failure.
 //
-// STILL UNVERIFIED, pending a live check: whether Kalshi's actual
-// moneyline-equivalent lives in a wholly separate series rather than the
-// spread ladder. Independent third-party write-ups (not Kalshi's own
-// docs, and not yet checked against a live response the way everything
-// above was) describe a single-contract "game winner" series named
-// KXNFLGAME, with the same date/matchup ticker shape confirmed live for
-// KXNFLSPREAD (e.g. "KXNFLGAME-26SEP13GBMIN" for a Packers @ Vikings
-// game) — one Yes/No contract per game, Yes backing one team, rather than
-// a ladder. By analogy this would make KXMLBGAME/KXNBAGAME the moneyline
-// series for those sports, but that's an unverified guess pending a real
-// curl (`curl -s "https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker=KXNFLGAME&status=open&limit=50"`).
+// - CONFIRMED live: the actual moneyline lives in its own series,
+//   KXNFLGAME, wholly separate from KXNFLSPREAD. Same event_ticker as the
+//   matching spread event (e.g. "KXNFLGAME-26SEP14DENKC", "KXNFLSPREAD-
+//   26SEP14DENKC" — both key off the same "<YYMONDD><AWAY><HOME>" game
+//   identity), but its market tickers carry no numeric strike suffix —
+//   just the team abbreviation directly (e.g. "KXNFLGAME-26SEP14DENKC-KC"
+//   / "...-DEN", `strike_type: "structured"`, no floor_strike field). One
+//   Yes/No contract per team, Yes backing that team winning outright —
+//   yes_ask_dollars/yes_bid_dollars on that contract IS the moneyline
+//   implied probability directly. This is the real moneyline-equivalent
+//   this file was missing; the spread ladder is a separate product for
+//   over/under-the-line questions, not a substitute for it.
+//
+// STILL UNVERIFIED, pending a live check: whether KXMLBGAME/KXNBAGAME
+// exist as the same-named moneyline series for those sports (naming
+// pattern strongly suggested by KXNFLGAME <-> KXNFLSPREAD, KXMLBSPREAD,
+// KXNBASPREAD all following "KX<LEAGUE><PRODUCT>" — not yet checked live).
 // Also still unverified: real MLB/NBA player-prop coverage. Nothing here
 // should be trusted for real money until each of those is checked too —
 // same rule this project has applied to every other data source.
